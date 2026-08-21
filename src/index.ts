@@ -16,7 +16,7 @@ import rtk from "./vendor/rtk.js";
 
 export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 	const tools = trackToolRegistrations(pi);
-	let results: Awaited<ReturnType<typeof loadModules>> = [];
+	let results: Awaited<ReturnType<typeof loadModules>>;
 
 	const modules: readonly SuiteModule[] = [
 		// UI base first. Atuin composes with the editor installed by QOL.

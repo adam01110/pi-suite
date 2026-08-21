@@ -1,3 +1,4 @@
+import { contentText } from "@earendil-works/pi-ai";
 import {
 	DynamicBorder,
 	type ExtensionAPI,
@@ -6,6 +7,8 @@ import {
 import { Container, Text } from "@earendil-works/pi-tui";
 import type { AnyToolDefinition, ToolTracker } from "../tool-tracker.js";
 import { importUpstream } from "../upstream.js";
+
+const BATCH_VALIDATION_PREFIX = 'Validation failed for tool "tool_batch":';
 
 const LSP_TOOL_NAMES = [
 	// keep-sorted start
@@ -17,18 +20,10 @@ const LSP_TOOL_NAMES = [
 	// keep-sorted end
 ] as const;
 
-function resultText(result: { content?: unknown }): string {
-	if (!Array.isArray(result.content)) return "";
-	return result.content
-		.filter(
-			(part): part is { type: "text"; text: string } =>
-				!!part &&
-				typeof part === "object" &&
-				(part as { type?: unknown }).type === "text",
-		)
-		.map((part) => part.text)
-		.join("\n")
-		.trim();
+function resultText(
+	result: Parameters<NonNullable<AnyToolDefinition["renderResult"]>>[0],
+): string {
+	return contentText(result.content).trim();
 }
 
 function lspCallText(
@@ -57,23 +52,21 @@ export function diagnosticsDisplayText(text: string): string {
 	return display;
 }
 
-export function latestDiagnosticsResult(content: unknown): unknown {
-	if (!Array.isArray(content)) return content;
-	const summaries = content.filter(
-		(item): item is { type: "text"; text: string } =>
-			!!item &&
-			typeof item === "object" &&
-			(item as { type?: unknown }).type === "text" &&
-			typeof (item as { text?: unknown }).text === "string" &&
-			(item as { text: string }).text.startsWith("LSP diagnostics:"),
-	);
-	const latest = summaries.at(-1);
-	if (!latest) return content;
-	return [{ ...latest, text: normalizeDiagnosticsText(latest.text) }];
+export function latestDiagnosticsResult(
+	content: ToolResultEvent["content"],
+): ToolResultEvent["content"] {
+	for (let index = content.length - 1; index >= 0; index--) {
+		const item = content[index];
+		if (item?.type !== "text" || !item.text.startsWith("LSP diagnostics:")) {
+			continue;
+		}
+		return [{ ...item, text: normalizeDiagnosticsText(item.text) }];
+	}
+	return content;
 }
 
 export function batchValidationText(raw: string): string | undefined {
-	if (!raw.startsWith('Validation failed for tool "tool_batch":')) return;
+	if (!raw.startsWith(BATCH_VALIDATION_PREFIX)) return;
 	const issue = raw
 		.match(/\n\s*-\s*(.+?)\n\nReceived arguments:/s)?.[1]
 		?.trim();
@@ -102,14 +95,17 @@ function compactBatchValidation(
 	return {
 		...definition,
 		renderResult(result, options, theme, context) {
+			const firstText = result.content.find((part) => part.type === "text");
+			if (
+				!firstText?.text.startsWith(BATCH_VALIDATION_PREFIX) &&
+				definition.renderResult
+			) {
+				return definition.renderResult(result, options, theme, context);
+			}
+
 			const raw = resultText(result);
 			const validation = batchValidationText(raw);
-			if (!validation) {
-				return (
-					definition.renderResult?.(result, options, theme, context) ??
-					new Text(raw || "no output", 0, 0)
-				);
-			}
+			if (!validation) return new Text(raw || "no output", 0, 0);
 			const [problem, allowed] = validation.split("\n", 2);
 			return new Text(
 				`${theme.fg("error", "● ")}${theme.fg("text", theme.bold("Tool Batch"))}${theme.fg("error", " · validation failed")}\n${theme.fg(
@@ -209,7 +205,7 @@ export default async function toolRendererAdapter(
 		if (event.toolName !== "lsp_diagnostics") return;
 		const content = latestDiagnosticsResult(event.content);
 		if (content === event.content) return;
-		return { content: content as ToolResultEvent["content"] };
+		return { content };
 	});
 
 	const batch = tracker.get("tool_batch");
