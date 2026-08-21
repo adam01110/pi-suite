@@ -39,25 +39,7 @@
 		"pi-rewind": "0.5.0",
 		"pi-web-access": "0.24.0"
 	},
-	"bundledDependencies": [
-		"@agent-sh/computer-use-linux",
-		"@ff-labs/pi-fff",
-		"@gotgenes/pi-autoformat",
-		"@harms-haus/pi-cwd",
-		"@tintinweb/pi-subagents",
-		"@vanillagreen/pi-qol",
-		"@vanillagreen/pi-tool-renderer",
-		"pi-ask-user",
-		"pi-atuin",
-		"pi-btw",
-		"pi-cache-optimizer",
-		"pi-cc-header",
-		"pi-footer",
-		"pi-lsp",
-		"pi-mcp-adapter",
-		"pi-rewind",
-		"pi-web-access"
-	],
+	"bundledDependencies": true,
 	"peerDependencies": {
 		"@earendil-works/pi-agent-core": "*",
 		"@earendil-works/pi-ai": "*",

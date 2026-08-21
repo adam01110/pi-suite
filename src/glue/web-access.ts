@@ -1,3 +1,4 @@
+import { contentText } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -13,22 +14,6 @@ const SELF_RENDERED_LABELS = new Set([
 	"Web Search",
 	// keep-sorted end
 ]);
-
-function messageText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (Array.isArray(content)) {
-		return content
-			.filter(
-				(part): part is { type: "text"; text: string } =>
-					!!part &&
-					typeof part === "object" &&
-					(part as { type?: unknown }).type === "text",
-			)
-			.map((part) => part.text)
-			.join(" ");
-	}
-	return "";
-}
 
 export default async function webAccessAdapter(
 	pi: ExtensionAPI,
@@ -46,12 +31,12 @@ export default async function webAccessAdapter(
 
 	const renderStatus = (
 		label: string,
-		content: unknown,
+		content: Parameters<typeof contentText>[0],
 		theme: ExtensionContext["ui"]["theme"],
 		color: "error" | "success",
 	) =>
 		new Text(
-			`${theme.fg(color, "● ")}${theme.fg("text", theme.bold(`${label} `))}${theme.fg("muted", messageText(content))}`,
+			`${theme.fg(color, "● ")}${theme.fg("text", theme.bold(`${label} `))}${theme.fg("muted", contentText(content, " "))}`,
 			0,
 			0,
 		);

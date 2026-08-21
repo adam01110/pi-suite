@@ -1,19 +1,12 @@
-import type {
-	ExtensionAPI,
-	ExtensionContext,
+import {
+	CustomEditor,
+	type ExtensionAPI,
+	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { CustomEditor } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
+import type { PiAtuinConfig } from "pi-atuin/config.js";
+import type { HistoryEntry } from "pi-atuin/history-store.js";
 import { importUpstream } from "../upstream.js";
-
-interface AtuinConfig {
-	recordAgentHistory: boolean;
-}
-
-interface HistoryEntry {
-	text: string;
-	timestamp: number;
-}
 
 async function openSearch(
 	ctx: ExtensionContext,
@@ -43,9 +36,9 @@ export default async function atuinAdapter(pi: ExtensionAPI): Promise<void> {
 		importUpstream("pi-atuin/history-store.js"),
 		importUpstream("pi-atuin/search-ui.js"),
 	]);
-	let config = configModule.loadConfig() as AtuinConfig;
+	let config = configModule.loadConfig() as PiAtuinConfig;
 	const getConfig = () => config;
-	const setConfig = (next: AtuinConfig) => {
+	const setConfig = (next: PiAtuinConfig) => {
 		config = next;
 		configModule.saveConfig(config);
 	};

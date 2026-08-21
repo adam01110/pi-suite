@@ -119,25 +119,12 @@ function compactBatchValidation(
 	};
 }
 
-function rememberToolCall(toolCalls: Set<string>, toolCallId: string): void {
-	toolCalls.add(toolCallId);
-	if (toolCalls.size <= 100) return;
-	const oldest = toolCalls.values().next().value;
-	if (oldest) toolCalls.delete(oldest);
-}
-
 function compactLspDefinition(
 	definition: AnyToolDefinition,
-	diagnosticsCalls: Set<string>,
 ): AnyToolDefinition {
 	return {
 		...definition,
 		renderShell: "self",
-		async execute(toolCallId, params, signal, onUpdate, context) {
-			if (definition.name === "lsp_diagnostics")
-				rememberToolCall(diagnosticsCalls, toolCallId);
-			return definition.execute(toolCallId, params, signal, onUpdate, context);
-		},
 		renderCall(args, theme, context) {
 			if (context.executionStarted) return new Text("", 0, 0);
 			return new Text(lspCallText(definition, args, theme), 0, 0);
@@ -211,19 +198,12 @@ export default async function toolRendererAdapter(
 	const batch = tracker.get("tool_batch");
 	if (batch) pi.registerTool(compactBatchValidation(batch));
 
-	const diagnosticsCalls = new Set<string>();
 	pi.registerMessageRenderer(
 		"pi-lsp-diagnostics",
 		(message, _options, theme) => {
 			const details = message.details as
-				| { path?: unknown; summary?: unknown; toolCallId?: unknown }
+				| { path?: unknown; summary?: unknown }
 				| undefined;
-			if (
-				typeof details?.toolCallId === "string" &&
-				diagnosticsCalls.has(details.toolCallId)
-			) {
-				return new Text("", 0, 0);
-			}
 			const path =
 				typeof details?.path === "string"
 					? ` ${theme.fg("muted", details.path)}`
@@ -251,7 +231,6 @@ export default async function toolRendererAdapter(
 
 	for (const name of LSP_TOOL_NAMES) {
 		const definition = tracker.get(name);
-		if (definition)
-			pi.registerTool(compactLspDefinition(definition, diagnosticsCalls));
+		if (definition) pi.registerTool(compactLspDefinition(definition));
 	}
 }
