@@ -1,79 +1,102 @@
+<div align="center">
+
 # pi-suite
 
-A single package that loads and adapts the Pi extensions used by my personal
-Pi harness.
+The extension bundle behind my personal [Pi](https://github.com/badlogic/pi-mono) harness.
+
+[![Pi](https://img.shields.io/badge/Pi-extension_suite-458588?style=flat-square&labelColor=504945)](https://github.com/badlogic/pi-mono)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-689d6a?style=flat-square&labelColor=504945&logo=typescript&logoColor=ebdbb2)](https://www.typescriptlang.org)
+[![Bun](https://img.shields.io/badge/Bun-tested-b16286?style=flat-square&labelColor=504945&logo=bun&logoColor=ebdbb2)](https://bun.sh)
+[![Nix](https://img.shields.io/badge/Nix-flake-fe8019?style=flat-square&labelColor=504945&logo=nixos&logoColor=ebdbb2)](https://nixos.org)
+
+[Overview](#overview) - [Usage](#usage) - [Modules](#modules) - [Development](#development) - [Layout](#layout)
+</div>
+
+I made this to keep the Pi extensions used by my config behind one package and
+one entrypoint. Most modules are loaded from upstream unchanged; the rest have
+small adapters where their behavior, tools, or rendering need to fit together.
 
 > [!WARNING]
-> This repository was created entirely by AI. I do not care about it as a
-> standalone project, and I do not provide support or accept responsibility
-> for its use. It exists only to hold glue code for my Pi harness.
+> This repository was created entirely by AI. I do not treat it as a standalone
+> project, provide support for it, or accept responsibility for its use. It
+> exists as glue for my own Pi harness.
 
 ## Overview
 
-`pi-suite` consolidates my Pi extensions behind one TypeScript entrypoint. It
-mostly loads upstream packages unchanged and adds narrow compatibility adapters
-where their behavior or rendering needs to fit the rest of my configuration.
+- Loads extensions sequentially so UI and tool integrations initialize in a
+  predictable order.
+- Keeps optional extension failures isolated instead of preventing Pi from
+  starting.
+- Lets individual modules be disabled through one environment variable.
+- Adapts Atuin, autoformatting, cache status, rewind, tool rendering, and web
+  access.
+- Vendors adapted code mode and RTK integrations with their provenance recorded
+  in source.
+- Packages the suite reproducibly with Nix, including the
+  `computer-use-linux` binaries.
 
-The repository is not the source of truth for my complete Pi setup. Nix
-configuration elsewhere controls deployment, settings, MCP servers, LSP
-servers, agents, secrets, environment variables, and operating-system services.
-
-The suite provides:
-
-- Deterministic, sequential extension loading.
-- Isolation of optional extension failures.
-- One environment variable for disabling individual modules.
-- Compatibility glue for Atuin, autoformatting, cache status, rewind, tool
-  rendering, and web access.
-- A vendored RTK hook with its provenance recorded in the source.
-- Reproducible Nix packaging, including the `computer-use-linux` binaries.
+This is not the source of truth for my complete Pi setup. My Nix configuration
+handles deployment, settings, MCP and LSP servers, agents, skills, secrets,
+environment variables, and operating-system services.
 
 ## Usage
 
-The package exposes `src/index.ts` as its Pi extension entrypoint. My Nix
-configuration loads the built package through Pi's `settings.packages` option.
+The package exposes `src/index.ts` as its Pi extension entrypoint. I build it
+with Nix and load the resulting package through Pi's `settings.packages` option.
 
-Disable modules with a comma-separated environment variable:
+Build the package with:
 
-```sh
+```bash
+nix build .#pi-suite
+```
+
+Disable individual modules with a comma-separated environment variable:
+
+```bash
 PI_SUITE_DISABLED=lsp,rewind,web-access
 ```
 
-All modules are enabled by default. Run `/suite` inside Pi to see which modules
-loaded, failed, or were disabled.
+All modules are enabled by default. Run `/suite` inside Pi to list the modules
+that loaded, failed, or were disabled.
+
+## Modules
+
+The suite currently combines:
+
+| Group | Modules |
+| --- | --- |
+| Interface | QOL, header, footer, cache status, cache optimizer, Atuin |
+| Workflow | BTW, cwd, FFF, autoformat, rewind, subagents |
+| Tools | ask-user, code mode, computer use, LSP, MCP, RTK, web access |
+| Rendering | autoformat and shared tool-renderer adapters |
+
+The actual extension behavior primarily belongs to the dependencies in
+[`package.json`](./package.json). Bugs in an unchanged upstream extension should
+generally go to its maintainer rather than here.
 
 ## Development
 
-Install dependencies and run the checks with Bun:
+Install dependencies and run the TypeScript checks and tests with Bun:
 
-```sh
+```bash
 bun install
 bun run typecheck
 bun test
 ```
 
-Format and validate the Nix flake with its formatter:
+Format and check the complete flake with Nix:
 
-```sh
+```bash
 nix fmt
 nix flake check
 ```
 
-Build the package with:
+## Layout
 
-```sh
-nix build .#pi-suite
-```
-
-Both dependency lockfiles are intentional:
-
-- `bun.lock` is used for local Bun development.
-- `package-lock.json` is required by Nix's `buildNpmPackage` and its fixed-output
-  dependency hash.
-
-## Upstream projects
-
-The actual extension behavior belongs primarily to the packages listed in
-`package.json`. This repository is integration glue, not a replacement for
-those projects. Bugs in an upstream extension should generally be reported to
-its maintainer rather than here.
+| Path | Contents |
+| --- | --- |
+| `src/index.ts` | Ordered module registry and `/suite` command |
+| `src/glue/` | Compatibility adapters around upstream extensions |
+| `src/vendor/` | Adapted vendored integrations and provenance notes |
+| `test/` | Bun tests for the registry, tracking, rendering, and code mode |
+| `flake/` | Nix package and treefmt configuration |
