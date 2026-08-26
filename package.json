@@ -16,7 +16,6 @@
 		],
 		"skills": [
 			"./node_modules/pi-ask-user/skills/ask-user",
-			"./node_modules/pi-mcp-adapter/skills/mcp-scripting",
 			"./node_modules/@agent-sh/computer-use-linux/skills/computer-use-linux"
 		]
 	},
@@ -28,6 +27,9 @@
 		"@tintinweb/pi-subagents": "0.18.2",
 		"@vanillagreen/pi-qol": "2.0.0",
 		"@vanillagreen/pi-tool-renderer": "2.0.0",
+		"esbuild": "0.27.3",
+		"fs-extra": "11.3.4",
+		"minisearch": "7.2.0",
 		"pi-ask-user": "0.14.0",
 		"pi-atuin": "0.1.11",
 		"pi-btw": "0.4.1",
@@ -37,7 +39,9 @@
 		"pi-lsp": "0.1.7",
 		"pi-mcp-adapter": "2.28.0",
 		"pi-rewind": "0.5.0",
-		"pi-web-access": "0.25.0"
+		"pi-web-access": "0.25.0",
+		"typescript": "5.9.3",
+		"zx": "8.8.5"
 	},
 	"bundledDependencies": true,
 	"peerDependencies": {
@@ -53,7 +57,7 @@
 		"@earendil-works/pi-coding-agent": "0.84.3",
 		"@earendil-works/pi-tui": "0.84.3",
 		"@types/bun": "1.4.0",
-		"typebox": "1.3.19",
-		"typescript": "7.0.2"
+		"@types/fs-extra": "11.0.4",
+		"typebox": "1.3.19"
 	}
 }

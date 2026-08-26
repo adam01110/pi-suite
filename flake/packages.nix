@@ -49,7 +49,7 @@ _: {
         ];
       };
 
-      npmDepsHash = "sha256-sqcBZ+DFtWfbfqiijpoWeteMsaKzPhdsQmASfBteBRc=";
+      npmDepsHash = "sha256-qViotyOZZwTeivyYoDXIMKaSxyOej0ytqOrVvGg/GeM=";
       npmInstallFlags = [
         "--legacy-peer-deps"
         "--omit=dev"
