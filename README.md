@@ -30,8 +30,7 @@ small adapters where their behavior, tools, or rendering need to fit together.
 - Lets individual modules be disabled through one environment variable.
 - Adapts Atuin, autoformatting, cache status, rewind, tool rendering, and web
   access.
-- Vendors adapted code mode and RTK integrations with their provenance recorded
-  in source.
+- Vendors an adapted RTK integration with its provenance recorded in source.
 - Packages the suite reproducibly with Nix, including the
   `computer-use-linux` binaries.
 
@@ -67,7 +66,7 @@ The suite currently combines:
 | --- | --- |
 | Interface | QOL, header, footer, cache status, cache optimizer, Atuin |
 | Workflow | BTW, cwd, FFF, autoformat, rewind, subagents |
-| Tools | ask-user, code mode, computer use, LSP, MCP, RTK, web access |
+| Tools | ask-user, computer use, LSP, MCP, RTK, web access |
 | Rendering | autoformat and shared tool-renderer adapters |
 
 The actual extension behavior primarily belongs to the dependencies in
@@ -98,5 +97,5 @@ nix flake check
 | `src/index.ts` | Ordered module registry and `/suite` command |
 | `src/glue/` | Compatibility adapters around upstream extensions |
 | `src/vendor/` | Adapted vendored integrations and provenance notes |
-| `test/` | Bun tests for the registry, tracking, rendering, and code mode |
+| `test/` | Bun tests for the registry, tracking, and rendering |
 | `flake/` | Nix package and treefmt configuration |

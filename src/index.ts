@@ -12,7 +12,6 @@ import {
 } from "./registry.js";
 import { trackToolRegistrations } from "./tool-tracker.js";
 import { upstreamFactory } from "./upstream.js";
-import codeMode from "./vendor/codemode/index.js";
 import rtk from "./vendor/rtk.js";
 
 export default async function piSuite(pi: ExtensionAPI): Promise<void> {
@@ -74,19 +73,7 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 			),
 			optional: true,
 		},
-		{
-			id: "codemode",
-			factory: async (api) => {
-				const unblock = tools.block(new Set(["mcpScript"]));
-				try {
-					await upstreamFactory("pi-mcp-adapter")(api);
-				} finally {
-					unblock();
-				}
-				codeMode(api, tools.get("mcp"));
-			},
-			optional: true,
-		},
+		{ id: "mcp", factory: upstreamFactory("pi-mcp-adapter"), optional: true },
 		{
 			id: "ask-user",
 			factory: upstreamFactory("pi-ask-user/index.js"),
