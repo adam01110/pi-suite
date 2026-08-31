@@ -11,31 +11,12 @@ export function bottomPaddingRows(contentRows: number, terminalRows: number): nu
   return Math.max(0, terminalRows - contentRows);
 }
 
-export interface BottomAnchorState {
-  mode: string;
-  rootCount: number;
-  contentRows: number;
-  terminalRows: number;
-  paddingRows: number;
-}
-
 export class RegularBottomAnchor implements Component {
-  private state: BottomAnchorState;
-
-  constructor(private readonly tui: RenderTui) {
-    this.state = this.measurement(0, 0);
-  }
-
-  getState(): BottomAnchorState {
-    return this.state;
-  }
+  constructor(private readonly tui: RenderTui) {}
 
   render(width: number): string[] {
     const roots = this.tui.children;
-    if (this.tui.mode !== "regular" || roots.length !== ROOT_COMPONENT_COUNT) {
-      this.state = this.measurement(roots.length, 0);
-      return [];
-    }
+    if (this.tui.mode !== "regular" || roots.length !== ROOT_COMPONENT_COUNT) return [];
 
     let contentRows = 0;
     for (const [index, root] of roots.entries()) {
@@ -49,39 +30,15 @@ export class RegularBottomAnchor implements Component {
       }
     }
 
-    this.state = this.measurement(roots.length, contentRows);
-    return Array<string>(this.state.paddingRows).fill("");
+    return Array<string>(bottomPaddingRows(contentRows, this.tui.terminal.rows)).fill("");
   }
 
   invalidate(): void {}
-
-  private measurement(rootCount: number, contentRows: number): BottomAnchorState {
-    const terminalRows = this.tui.terminal.rows;
-    return {
-      mode: this.tui.mode,
-      rootCount,
-      contentRows,
-      terminalRows,
-      paddingRows: bottomPaddingRows(contentRows, terminalRows),
-    };
-  }
 }
 
 export default function regularBottomAnchor(pi: ExtensionAPI): void {
-  let anchor: RegularBottomAnchor | undefined;
-
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-    ctx.ui.setWidget(WIDGET_ID, (tui) => {
-      anchor = new RegularBottomAnchor(tui as RenderTui);
-      return anchor;
-    });
-  });
-
-  pi.registerCommand("bottom-anchor", {
-    description: "Show regular-mode bottom anchor state",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify(JSON.stringify(anchor?.getState() ?? { active: false }), "info");
-    },
+    ctx.ui.setWidget(WIDGET_ID, (tui) => new RegularBottomAnchor(tui as RenderTui));
   });
 }
