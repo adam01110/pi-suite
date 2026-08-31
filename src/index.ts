@@ -18,6 +18,7 @@ import rtk from "./vendor/rtk.js";
 
 const BLOCKED_COMMANDS = {
 	atuin: new Set(["atuin"]),
+	cacheOptimizer: new Set(["cache-optimizer"]),
 	fff: new Set(["fff-health", "fff-mode", "fff-rescan"]),
 	footer: new Set(["footer"]),
 	header: new Set([
@@ -85,7 +86,10 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 		{ id: "cache-status", factory: cacheStatusColor, optional: true },
 		{
 			id: "cache-optimizer",
-			factory: upstreamFactory("pi-cache-optimizer/index.js"),
+			factory: suppressCommands(
+				upstreamFactory("pi-cache-optimizer/index.js"),
+				BLOCKED_COMMANDS.cacheOptimizer,
+			),
 			optional: true,
 		},
 		{
