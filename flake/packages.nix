@@ -43,6 +43,9 @@ _: {
       src = lib.fileset.toSource {
         root = ../.;
         fileset = lib.fileset.unions [
+          ../LICENSE
+          ../LICENSES
+          ../THIRD_PARTY_NOTICES.md
           ../package-lock.json
           ../package.json
           ../src
@@ -66,7 +69,7 @@ _: {
         install -Dm755 ${computerUseCosmic} "$computerUseDir/computer-use-linux-cosmic"
 
         mkdir -p "$out"
-        cp -r node_modules package.json src "$out/"
+        cp -r LICENSE LICENSES THIRD_PARTY_NOTICES.md node_modules package.json src "$out/"
 
         runHook postInstall
       '';

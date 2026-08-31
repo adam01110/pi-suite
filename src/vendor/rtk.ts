@@ -1,5 +1,8 @@
-// Vendored unchanged except for this provenance note from rtk 0.45.0:
-// /nix/store/i6r6bm5a6hs7qjlgdn0r8nsbanvqn371-source/hooks/pi/rtk.ts
+// SPDX-License-Identifier: Apache-2.0
+// Derived from RTK 0.45.0:
+// https://github.com/rtk-ai/rtk/blob/v0.45.0/hooks/pi/rtk.ts
+// Modified in 2026 by Adam0: added provenance and licensing metadata for
+// inclusion in pi-suite.
 // RTK Pi extension — rewrites bash commands to use rtk for token savings.
 // Requires: rtk >= 0.23.0 in PATH.
 //
