@@ -76,9 +76,21 @@ export function fixedBtwModel(factory: ExtensionFactory): ExtensionFactory {
 		const command = modelCommand;
 		const ensureModel = async (_event: unknown, ctx: ExtensionContext) => {
 			if (hasFixedBtwModel(ctx)) return;
+			const quietUi = new Proxy(ctx.ui, {
+				get(target, property, receiver) {
+					if (property === "notify") return () => undefined;
+					return Reflect.get(target, property, receiver);
+				},
+			});
+			const quietCtx = new Proxy(ctx, {
+				get(target, property, receiver) {
+					if (property === "ui") return quietUi;
+					return Reflect.get(target, property, receiver);
+				},
+			});
 			await command.handler(
 				`${BTW_MODEL.provider} ${BTW_MODEL.id} ${BTW_MODEL.api}`,
-				ctx as Parameters<typeof command.handler>[1],
+				quietCtx as Parameters<typeof command.handler>[1],
 			);
 		};
 		pi.on("session_start", ensureModel);

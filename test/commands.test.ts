@@ -34,6 +34,7 @@ describe("suite command adapters", () => {
 		const handlers = new Map<string, EventHandler[]>();
 		const branch: Array<Record<string, unknown>> = [];
 		const modelArgs: string[] = [];
+		const notifications: string[] = [];
 		const pi = {
 			on(name: string, handler: EventHandler) {
 				handlers.set(name, [...(handlers.get(name) ?? []), handler]);
@@ -44,13 +45,15 @@ describe("suite command adapters", () => {
 		} as unknown as ExtensionAPI;
 		const ctx = {
 			sessionManager: { getBranch: () => branch },
+			ui: { notify: (message: string) => notifications.push(message) },
 		} as unknown as ExtensionContext;
 
 		await fixedBtwModel(async (api) => {
 			api.registerCommand("btw", {} as never);
 			api.registerCommand("btw:model", {
-				handler: async (args: string) => {
+				handler: async (args: string, commandCtx: ExtensionContext) => {
 					modelArgs.push(args);
+					commandCtx.ui.notify("model override set");
 					branch.push({
 						customType: "btw-model-override",
 						data: {
@@ -73,5 +76,6 @@ describe("suite command adapters", () => {
 		expect(modelArgs).toEqual([
 			"openai-codex gpt-5.6-terra openai-codex-responses",
 		]);
+		expect(notifications).toEqual([]);
 	});
 });
