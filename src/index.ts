@@ -2,8 +2,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import atuin from "./glue/atuin.js";
 import autoformatRenderer from "./glue/autoformat-renderer.js";
 import cacheStatusColor from "./glue/cache-status.js";
-import rewind from "./glue/rewind.js";
+import { fixedBtwModel, suppressCommands } from "./glue/commands.js";
 import regularBottomAnchor from "./glue/regular-bottom-anchor.js";
+import rewind from "./glue/rewind.js";
 import toolRenderer from "./glue/tool-renderer.js";
 import webAccess from "./glue/web-access.js";
 import {
@@ -14,6 +15,35 @@ import {
 import { trackToolRegistrations } from "./tool-tracker.js";
 import { upstreamFactory } from "./upstream.js";
 import rtk from "./vendor/rtk.js";
+
+const BLOCKED_COMMANDS = {
+	atuin: new Set(["atuin"]),
+	fff: new Set(["fff-health", "fff-mode", "fff-rescan"]),
+	footer: new Set(["footer"]),
+	header: new Set([
+		"hc",
+		"hcl",
+		"hdf",
+		"hi",
+		"hm",
+		"hps",
+		"hs",
+		"hsp",
+		"htg",
+		"hv",
+	]),
+	mcp: new Set(["mcp-auth", "pi-mcp"]),
+	qol: new Set([
+		"qol",
+		"qol:rename",
+		"qol:rename:full",
+		"schedule",
+		"search",
+		"search:refresh",
+		"search:resume-pending",
+	]),
+	webAccess: new Set(["curator", "google-account", "search", "websearch"]),
+} as const;
 
 export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 	const tools = trackToolRegistrations(pi);
@@ -30,17 +60,26 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 		// UI base first. Atuin composes with the editor installed by QOL.
 		{
 			id: "qol",
-			factory: upstreamFactory("@vanillagreen/pi-qol/extensions/qol.js"),
+			factory: suppressCommands(
+				upstreamFactory("@vanillagreen/pi-qol/extensions/qol.js"),
+				BLOCKED_COMMANDS.qol,
+			),
 			optional: true,
 		},
 		{
 			id: "header",
-			factory: upstreamFactory("pi-cc-header/extensions/pi-cc-header.js"),
+			factory: suppressCommands(
+				upstreamFactory("pi-cc-header/extensions/pi-cc-header.js"),
+				BLOCKED_COMMANDS.header,
+			),
 			optional: true,
 		},
 		{
 			id: "footer",
-			factory: upstreamFactory("pi-footer/src/index.js"),
+			factory: suppressCommands(
+				upstreamFactory("pi-footer/src/index.js"),
+				BLOCKED_COMMANDS.footer,
+			),
 			optional: true,
 		},
 		{ id: "cache-status", factory: cacheStatusColor, optional: true },
@@ -49,7 +88,11 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 			factory: upstreamFactory("pi-cache-optimizer/index.js"),
 			optional: true,
 		},
-		{ id: "atuin", factory: atuin, optional: true },
+		{
+			id: "atuin",
+			factory: suppressCommands(atuin, BLOCKED_COMMANDS.atuin),
+			optional: true,
+		},
 		{
 			id: "fast-resume",
 			factory: upstreamFactory("pi-fast-resume/fast-resume.ts"),
@@ -58,7 +101,7 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 
 		{
 			id: "btw",
-			factory: upstreamFactory("pi-btw/extensions/btw.js"),
+			factory: fixedBtwModel(upstreamFactory("pi-btw/extensions/btw.js")),
 			optional: true,
 		},
 		{
@@ -68,7 +111,10 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 		},
 		{
 			id: "fff",
-			factory: upstreamFactory("@ff-labs/pi-fff/src/index.js"),
+			factory: suppressCommands(
+				upstreamFactory("@ff-labs/pi-fff/src/index.js"),
+				BLOCKED_COMMANDS.fff,
+			),
 			optional: true,
 		},
 		{
@@ -86,7 +132,14 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 			),
 			optional: true,
 		},
-		{ id: "mcp", factory: upstreamFactory("pi-mcp-adapter"), optional: true },
+		{
+			id: "mcp",
+			factory: suppressCommands(
+				upstreamFactory("pi-mcp-adapter"),
+				BLOCKED_COMMANDS.mcp,
+			),
+			optional: true,
+		},
 		{
 			id: "ask-user",
 			factory: upstreamFactory("pi-ask-user/index.js"),
@@ -105,7 +158,10 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 		},
 		{
 			id: "web-access",
-			factory: (api) => webAccess(api, tools),
+			factory: suppressCommands(
+				(api) => webAccess(api, tools),
+				BLOCKED_COMMANDS.webAccess,
+			),
 			optional: true,
 		},
 		{ id: "rtk", factory: rtk, optional: true },
