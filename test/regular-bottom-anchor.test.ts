@@ -1,60 +1,53 @@
 import { describe, expect, test } from "bun:test";
-import {
-  bottomAlignSections,
-  installRegularBottomAnchor,
-} from "../src/glue/regular-bottom-anchor.js";
+import type { TUI } from "@earendil-works/pi-tui";
+import { bottomPaddingRows, RegularBottomAnchor } from "../src/glue/regular-bottom-anchor.js";
 
 const component = (...lines: string[]) => ({
   render: () => lines,
   invalidate: () => {},
 });
 
+function createTui(rows: number): TUI & { mode: "regular" } {
+  const widgetsAbove = component() as ReturnType<typeof component> & {
+    children: ReturnType<typeof component>[];
+  };
+  widgetsAbove.children = [];
+
+  return {
+    mode: "regular",
+    terminal: { rows },
+    children: [
+      component("message"),
+      component(),
+      component(),
+      widgetsAbove,
+      component("editor"),
+      component(),
+      component("footer"),
+    ],
+  } as unknown as TUI & { mode: "regular" };
+}
+
 describe("regular bottom anchor", () => {
-  test("inserts unused rows between the transcript and dock", () => {
-    expect(bottomAlignSections(["message"], ["editor", "footer"], 5)).toEqual([
-      "message",
-      "",
-      "",
-      "editor",
-      "footer",
-    ]);
+  test("calculates only unused terminal rows", () => {
+    expect(bottomPaddingRows(3, 5)).toBe(2);
+    expect(bottomPaddingRows(6, 5)).toBe(0);
   });
 
-  test("uses normal flow once content fills the terminal", () => {
-    expect(bottomAlignSections(["one", "two"], ["editor", "footer"], 3)).toEqual([
-      "one",
-      "two",
-      "editor",
-      "footer",
-    ]);
+  test("renders unused rows between transcript and editor dock", () => {
+    const tui = createTui(5);
+    const anchor = new RegularBottomAnchor(tui);
+    const widgetsAbove = tui.children[3] as unknown as {
+      children: Array<ReturnType<typeof component> | RegularBottomAnchor>;
+    };
+    widgetsAbove.children.push(anchor);
+
+    expect(anchor.render(80)).toEqual(["", ""]);
   });
 
-  test("wraps and restores the regular renderer", () => {
-    let renderRequests = 0;
-    const tui = {
-      mode: "regular" as const,
-      terminal: { rows: 5 },
-      children: [
-        component("message"),
-        component(),
-        component(),
-        component(),
-        component("editor"),
-        component(),
-        component("footer"),
-      ],
-      render: () => ["original"],
-      requestRender: () => {
-        renderRequests++;
-      },
-    } as unknown as Parameters<typeof installRegularBottomAnchor>[0];
-
-    const restore = installRegularBottomAnchor(tui);
-    expect(tui.render(80)).toEqual(["message", "", "", "editor", "footer"]);
-    expect(renderRequests).toBe(1);
-
-    restore();
-    expect(tui.render(80)).toEqual(["original"]);
-    expect(renderRequests).toBe(2);
+  test("disables itself for an unknown root layout", () => {
+    const tui = createTui(5);
+    tui.children.pop();
+    expect(new RegularBottomAnchor(tui).render(80)).toEqual([]);
   });
 });

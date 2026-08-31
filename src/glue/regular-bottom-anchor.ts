@@ -1,72 +1,87 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { TUI } from "@earendil-works/pi-tui";
+import type { Component, Container, TUI } from "@earendil-works/pi-tui";
 
 const WIDGET_ID = "pi-suite-regular-bottom-anchor";
 const ROOT_COMPONENT_COUNT = 7;
-const DOCK_COMPONENT_COUNT = 6;
+const WIDGETS_ABOVE_INDEX = 3;
 
-type RenderTui = TUI & {
-  mode: "regular" | "fullscreen";
-  render(width: number): string[];
-};
+type RenderTui = TUI & { mode: "regular" | "fullscreen" };
 
-export function bottomAlignSections(
-  transcript: readonly string[],
-  dock: readonly string[],
-  terminalRows: number,
-): string[] {
-  const padding = Math.max(0, terminalRows - transcript.length - dock.length);
-  return [...transcript, ...Array<string>(padding).fill(""), ...dock];
+export function bottomPaddingRows(contentRows: number, terminalRows: number): number {
+  return Math.max(0, terminalRows - contentRows);
 }
 
-export function installRegularBottomAnchor(tui: RenderTui): () => void {
-  if (tui.mode !== "regular") return () => {};
+export interface BottomAnchorState {
+  mode: string;
+  rootCount: number;
+  contentRows: number;
+  terminalRows: number;
+  paddingRows: number;
+}
 
-  const hadOwnRender = Object.hasOwn(tui, "render");
-  const ownRender = Object.getOwnPropertyDescriptor(tui, "render");
-  const render = tui.render;
+export class RegularBottomAnchor implements Component {
+  private state: BottomAnchorState;
 
-  Object.defineProperty(tui, "render", {
-    configurable: true,
-    writable: true,
-    value(this: RenderTui, width: number): string[] {
-      if (this.children.length !== ROOT_COMPONENT_COUNT) return render.call(this, width);
+  constructor(private readonly tui: RenderTui) {
+    this.state = this.measurement(0, 0);
+  }
 
-      const split = ROOT_COMPONENT_COUNT - DOCK_COMPONENT_COUNT;
-      const transcript = this.children
-        .slice(0, split)
-        .flatMap((component) => component.render(width));
-      const dock = this.children.slice(split).flatMap((component) => component.render(width));
-      return bottomAlignSections(transcript, dock, this.terminal.rows);
-    },
-  });
-  tui.requestRender(true);
+  getState(): BottomAnchorState {
+    return this.state;
+  }
 
-  return () => {
-    if (hadOwnRender && ownRender) Object.defineProperty(tui, "render", ownRender);
-    else delete (tui as Partial<RenderTui>).render;
-    tui.requestRender(true);
-  };
+  render(width: number): string[] {
+    const roots = this.tui.children;
+    if (this.tui.mode !== "regular" || roots.length !== ROOT_COMPONENT_COUNT) {
+      this.state = this.measurement(roots.length, 0);
+      return [];
+    }
+
+    let contentRows = 0;
+    for (const [index, root] of roots.entries()) {
+      if (index !== WIDGETS_ABOVE_INDEX) {
+        contentRows += root.render(width).length;
+        continue;
+      }
+
+      for (const widget of (root as Container).children) {
+        if (widget !== this) contentRows += widget.render(width).length;
+      }
+    }
+
+    this.state = this.measurement(roots.length, contentRows);
+    return Array<string>(this.state.paddingRows).fill("");
+  }
+
+  invalidate(): void {}
+
+  private measurement(rootCount: number, contentRows: number): BottomAnchorState {
+    const terminalRows = this.tui.terminal.rows;
+    return {
+      mode: this.tui.mode,
+      rootCount,
+      contentRows,
+      terminalRows,
+      paddingRows: bottomPaddingRows(contentRows, terminalRows),
+    };
+  }
 }
 
 export default function regularBottomAnchor(pi: ExtensionAPI): void {
-  let restore: (() => void) | undefined;
+  let anchor: RegularBottomAnchor | undefined;
 
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-
     ctx.ui.setWidget(WIDGET_ID, (tui) => {
-      restore?.();
-      restore = installRegularBottomAnchor(tui as RenderTui);
-      return {
-        render: () => [],
-        invalidate: () => {},
-      };
+      anchor = new RegularBottomAnchor(tui as RenderTui);
+      return anchor;
     });
   });
 
-  pi.on("session_shutdown", () => {
-    restore?.();
-    restore = undefined;
+  pi.registerCommand("bottom-anchor", {
+    description: "Show regular-mode bottom anchor state",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify(JSON.stringify(anchor?.getState() ?? { active: false }), "info");
+    },
   });
 }
