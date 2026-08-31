@@ -3,6 +3,7 @@ import atuin from "./glue/atuin.js";
 import autoformatRenderer from "./glue/autoformat-renderer.js";
 import cacheStatusColor from "./glue/cache-status.js";
 import rewind from "./glue/rewind.js";
+import regularBottomAnchor from "./glue/regular-bottom-anchor.js";
 import toolRenderer from "./glue/tool-renderer.js";
 import webAccess from "./glue/web-access.js";
 import {
@@ -19,6 +20,13 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 	let results: Awaited<ReturnType<typeof loadModules>>;
 
 	const modules: readonly SuiteModule[] = [
+		// Capture the regular renderer before UI extensions install their components.
+		{
+			id: "regular-bottom-anchor",
+			factory: regularBottomAnchor,
+			optional: true,
+		},
+
 		// UI base first. Atuin composes with the editor installed by QOL.
 		{
 			id: "qol",

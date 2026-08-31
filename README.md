@@ -27,6 +27,8 @@ small adapters where their behavior, tools, or rendering need to fit together.
   predictable order.
 - Keeps optional extension failures isolated instead of preventing Pi from
   starting.
+- Bottom-aligns the regular-mode input area without replacing terminal
+  scrollback.
 - Lets individual modules be disabled through one environment variable.
 - Adapts Atuin, autoformatting, cache status, rewind, tool rendering, and web
   access.
@@ -64,7 +66,7 @@ The suite currently combines:
 
 | Group | Modules |
 | --- | --- |
-| Interface | QOL, header, footer, cache status, cache optimizer, Atuin, fast resume |
+| Interface | Regular bottom anchor, QOL, header, footer, cache status, cache optimizer, Atuin, fast resume |
 | Workflow | BTW, cwd, FFF, autoformat, rewind, subagents |
 | Tools | ask-user, computer use, LSP, MCP, RTK, web access |
 | Rendering | autoformat and shared tool-renderer adapters |
