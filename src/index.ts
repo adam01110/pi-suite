@@ -42,6 +42,11 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 			optional: true,
 		},
 		{ id: "atuin", factory: atuin, optional: true },
+		{
+			id: "fast-resume",
+			factory: upstreamFactory("pi-fast-resume/fast-resume.ts"),
+			optional: true,
+		},
 
 		{
 			id: "btw",

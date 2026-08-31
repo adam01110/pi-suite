@@ -64,7 +64,7 @@ The suite currently combines:
 
 | Group | Modules |
 | --- | --- |
-| Interface | QOL, header, footer, cache status, cache optimizer, Atuin |
+| Interface | QOL, header, footer, cache status, cache optimizer, Atuin, fast resume |
 | Workflow | BTW, cwd, FFF, autoformat, rewind, subagents |
 | Tools | ask-user, computer use, LSP, MCP, RTK, web access |
 | Rendering | autoformat and shared tool-renderer adapters |
