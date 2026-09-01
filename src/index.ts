@@ -16,6 +16,8 @@ import { trackToolRegistrations } from "./tool-tracker.js";
 import { upstreamFactory } from "./upstream.js";
 import rtk from "./vendor/rtk.js";
 
+const BTW_MODEL = process.env.PI_SUITE_BTW_MODEL;
+
 const BLOCKED_COMMANDS = {
 	atuin: new Set(["atuin"]),
 	cacheOptimizer: new Set(["cache-optimizer"]),
@@ -105,7 +107,12 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 
 		{
 			id: "btw",
-			factory: fixedBtwModel(upstreamFactory("pi-btw/extensions/btw.js")),
+			factory: BTW_MODEL
+				? fixedBtwModel(
+						upstreamFactory("pi-btw/extensions/btw.js"),
+						BTW_MODEL,
+					)
+				: upstreamFactory("pi-btw/extensions/btw.js"),
 			optional: true,
 		},
 		{

@@ -4,11 +4,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { ExtensionFactory } from "../registry.js";
 
-const BTW_MODEL = {
-	api: "openai-codex-responses",
-	id: "gpt-5.6-terra",
-	provider: "openai-codex",
-} as const;
 const BTW_MODEL_ENTRY_TYPE = "btw-model-override";
 
 type CommandDefinition = Parameters<ExtensionAPI["registerCommand"]>[1];
@@ -31,7 +26,10 @@ export function suppressCommands(
 	};
 }
 
-function hasFixedBtwModel(ctx: ExtensionContext): boolean {
+function hasFixedBtwModel(
+	ctx: ExtensionContext,
+	model: { id: string; provider: string },
+): boolean {
 	const branch = ctx.sessionManager.getBranch();
 	for (let index = branch.length - 1; index >= 0; index--) {
 		const entry = branch[index] as {
@@ -47,14 +45,24 @@ function hasFixedBtwModel(ctx: ExtensionContext): boolean {
 			continue;
 		return (
 			entry.data?.action === "set" &&
-			entry.data.provider === BTW_MODEL.provider &&
-			entry.data.id === BTW_MODEL.id
+			entry.data.provider === model.provider &&
+			entry.data.id === model.id
 		);
 	}
 	return false;
 }
 
-export function fixedBtwModel(factory: ExtensionFactory): ExtensionFactory {
+export function fixedBtwModel(
+	factory: ExtensionFactory,
+	modelArgs: string,
+): ExtensionFactory {
+	const [provider, id, api, ...extra] = modelArgs.trim().split(/\s+/);
+	if (!provider || !id || !api || extra.length > 0)
+		throw new Error(
+			"BTW model must contain exactly: <provider> <model> <api>",
+		);
+	const model = { api, id, provider };
+
 	return async (pi) => {
 		const register = pi.registerCommand.bind(pi);
 		let modelCommand: CommandDefinition | undefined;
@@ -75,7 +83,7 @@ export function fixedBtwModel(factory: ExtensionFactory): ExtensionFactory {
 		if (!modelCommand) throw new Error("pi-btw did not register /btw:model");
 		const command = modelCommand;
 		const ensureModel = async (_event: unknown, ctx: ExtensionContext) => {
-			if (hasFixedBtwModel(ctx)) return;
+			if (hasFixedBtwModel(ctx, model)) return;
 			const quietUi = new Proxy(ctx.ui, {
 				get(target, property, receiver) {
 					if (property === "notify") return () => undefined;
@@ -89,7 +97,7 @@ export function fixedBtwModel(factory: ExtensionFactory): ExtensionFactory {
 				},
 			});
 			await command.handler(
-				`${BTW_MODEL.provider} ${BTW_MODEL.id} ${BTW_MODEL.api}`,
+				modelArgs,
 				quietCtx as Parameters<typeof command.handler>[1],
 			);
 		};
