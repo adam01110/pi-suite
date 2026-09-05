@@ -3,6 +3,7 @@ _: {
     inherit
       (pkgs)
       # keep-sorted start
+      autoPatchelfHook
       buildNpmPackage
       fetchurl
       lib
@@ -52,11 +53,19 @@ _: {
         ];
       };
 
-      npmDepsHash = "sha256-AZRwohpdo7JTiwKk2SSq9NW2z1N0Dg4S5xE6uCm1bY0=";
+      npmDepsHash = "sha256-ZnpHxFub6a8J1u41SFIHyDOf2+2gBlfXib2ImKWXl/g=";
       npmInstallFlags = [
         "--legacy-peer-deps"
         "--omit=dev"
       ];
+      nativeBuildInputs = [autoPatchelfHook];
+      buildInputs = with pkgs; [
+        # keep-sorted start
+        stdenv.cc.cc.lib
+        zlib
+        # keep-sorted end
+      ];
+      autoPatchelfIgnoreMissingDeps = ["libc.musl-x86_64.so.1"];
       dontNpmBuild = true;
 
       COMPUTER_USE_LINUX_SKIP_DOWNLOAD = "1";
