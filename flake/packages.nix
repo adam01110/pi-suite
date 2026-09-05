@@ -15,22 +15,22 @@ _: {
       if stdenv.hostPlatform.isx86_64
       then {
         arch = "x86_64";
-        binaryHash = "sha256-ZDLobuZIDzH1CPItvoYNaYeFmZfuR2yjYySjji6030g=";
-        cosmicHash = "sha256-pqxi3NcyUksj46uicoFP4XTvsWKRuLkSi2Pot90+LbM=";
+        binaryHash = "sha256-0h55gzb1xrae98hTKIZjmVD+JIVeLbsgXMPzRSiUAg4=";
+        cosmicHash = "sha256-wet2Dul9UNwVfWcRlWzYT5dwHJmIVbI8HvG9d2GaFFg=";
         nodeArch = "x64";
       }
       else if stdenv.hostPlatform.isAarch64
       then {
         arch = "aarch64";
-        binaryHash = "sha256-1EeXIE7ocVsTak8l0wkl5shw7SmxqBBWr7UNuzHyswI=";
-        cosmicHash = "sha256-/uV57JXKUM5/kEpzIMhBJ4UAmo7aB0hVWdG2DYtiQHE=";
+        binaryHash = "sha256-UScY62T5HNjvyWEHJ/ZfQOyTIYv+dRprtg/jYmaOIqY=";
+        cosmicHash = "sha256-IlALWHrGUKw8yMTd2MdcD9ov0B9Or/0cpIKA3btiCvo=";
         nodeArch = "arm64";
       }
       else throw "pi-suite: unsupported computer-use-linux architecture";
 
     fetchComputerUse = name: hash:
       fetchurl {
-        url = "https://github.com/agent-sh/computer-use-linux/releases/download/v0.4.9/${name}-${computerUseTarget.arch}-unknown-linux-gnu";
+        url = "https://github.com/agent-sh/computer-use-linux/releases/download/v0.5.0/${name}-${computerUseTarget.arch}-unknown-linux-gnu";
         inherit hash;
       };
 
@@ -53,7 +53,7 @@ _: {
         ];
       };
 
-      npmDepsHash = "sha256-ZnpHxFub6a8J1u41SFIHyDOf2+2gBlfXib2ImKWXl/g=";
+      npmDepsHash = "sha256-UcLGyGKlzdllLFXMERcHBcHZ8G1Jvx5SGRQFl9h0asg=";
       npmInstallFlags = [
         "--legacy-peer-deps"
         "--omit=dev"
