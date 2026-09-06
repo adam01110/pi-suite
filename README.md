@@ -30,8 +30,6 @@ small adapters where their behavior, tools, or rendering need to fit together.
 - Bottom-aligns the regular-mode input area without replacing terminal
   scrollback.
 - Lets individual modules be disabled through one environment variable.
-- Adds OpenCode-style allow, ask, and deny enforcement for tools, Bash, MCP,
-  skills, paths, and external directories.
 - Blocks destructive commands and access to secrets with CC Safety Net.
 - Adapts Atuin, autoformatting, cache status, rewind, tool rendering, and web
   access.
@@ -71,7 +69,7 @@ The suite currently combines:
 | --- | --- |
 | Interface | Regular bottom anchor, QOL, header, footer, cache status, cache optimizer, Atuin, fast resume |
 | Workflow | BTW, cwd, FFF, autoformat, rewind, subagents |
-| Tools | ask-user, CC Safety Net, computer use, LSP, MCP, permissions, RTK, web access |
+| Tools | ask-user, CC Safety Net, computer use, LSP, MCP, RTK, web access |
 | Rendering | autoformat and shared tool-renderer adapters |
 
 The actual extension behavior primarily belongs to the dependencies in
