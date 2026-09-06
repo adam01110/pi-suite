@@ -1,79 +1,97 @@
 import { describe, expect, test } from "bun:test";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
-import { fixedBtwModel, suppressCommands } from "../src/glue/commands.js";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { fixedBtwModel, suppressCommands, suppressNotifications } from "../src/glue/commands.js";
 
-type EventHandler = (
-	event: unknown,
-	ctx: ExtensionContext,
-) => Promise<void> | void;
+type EventHandler = (event: unknown, ctx: ExtensionContext) => Promise<void> | void;
 
 describe("suite command adapters", () => {
-	test("suppresses selected commands and restores registration", async () => {
-		const registered: string[] = [];
-		const original = (name: string) => registered.push(name);
-		const pi = { registerCommand: original } as unknown as ExtensionAPI;
+  test("suppresses selected commands and restores registration", async () => {
+    const registered: string[] = [];
+    const original = (name: string) => registered.push(name);
+    const pi = { registerCommand: original } as unknown as ExtensionAPI;
 
-		await suppressCommands(
-			async (api) => {
-				api.registerCommand("keep", {} as never);
-				await Promise.resolve();
-				api.registerCommand("remove", {} as never);
-			},
-			new Set(["remove"]),
-		)(pi);
-		pi.registerCommand("after", {} as never);
+    await suppressCommands(
+      async (api) => {
+        api.registerCommand("keep", {} as never);
+        await Promise.resolve();
+        api.registerCommand("remove", {} as never);
+      },
+      new Set(["remove"]),
+    )(pi);
+    pi.registerCommand("after", {} as never);
 
-		expect(registered).toEqual(["keep", "after"]);
-	});
+    expect(registered).toEqual(["keep", "after"]);
+  });
 
-	test("removes the BTW model command and fixes the session model", async () => {
-		const registered: string[] = [];
-		const handlers = new Map<string, EventHandler[]>();
-		const branch: Array<Record<string, unknown>> = [];
-		const modelArgs: string[] = [];
-		const notifications: string[] = [];
-		const pi = {
-			on(name: string, handler: EventHandler) {
-				handlers.set(name, [...(handlers.get(name) ?? []), handler]);
-			},
-			registerCommand(name: string) {
-				registered.push(name);
-			},
-		} as unknown as ExtensionAPI;
-		const ctx = {
-			sessionManager: { getBranch: () => branch },
-			ui: { notify: (message: string) => notifications.push(message) },
-		} as unknown as ExtensionContext;
+  test("suppresses selected notifications and restores event registration", async () => {
+    const notifications: string[] = [];
+    const handlers = new Map<string, EventHandler[]>();
+    const originalOn = (name: string, handler: EventHandler) => {
+      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+    };
+    const pi = { on: originalOn } as unknown as ExtensionAPI;
+    const ctx = {
+      ui: { notify: (message: string) => notifications.push(message) },
+    } as unknown as ExtensionContext;
 
-		await fixedBtwModel(async (api) => {
-			api.registerCommand("btw", {} as never);
-			api.registerCommand("btw:model", {
-				handler: async (args: string, commandCtx: ExtensionContext) => {
-					modelArgs.push(args);
-					commandCtx.ui.notify("model override set");
-					branch.push({
-						customType: "btw-model-override",
-						data: {
-							action: "set",
-							id: "side-model",
-							provider: "side-provider",
-						},
-						type: "custom",
-					});
-				},
-			} as never);
-		}, "side-provider side-model side-api")(pi);
+    await suppressNotifications(
+      async (api) => {
+        api.on("session_start", (_event, eventCtx) => {
+          eventCtx.ui.notify("ignore: unavailable", "error");
+          eventCtx.ui.notify("keep", "warning");
+        });
+      },
+      new Set(["ignore:"]),
+    )(pi);
 
-		for (const handler of handlers.get("session_start") ?? [])
-			await handler({}, ctx);
-		for (const handler of handlers.get("session_tree") ?? [])
-			await handler({}, ctx);
+    expect(pi.on as unknown).toBe(originalOn as unknown);
+    for (const handler of handlers.get("session_start") ?? []) await handler({}, ctx);
+    expect(notifications).toEqual(["keep"]);
+  });
 
-		expect(registered).toEqual(["btw"]);
-		expect(modelArgs).toEqual(["side-provider side-model side-api"]);
-		expect(notifications).toEqual([]);
-	});
+  test("removes the BTW model command and fixes the session model", async () => {
+    const registered: string[] = [];
+    const handlers = new Map<string, EventHandler[]>();
+    const branch: Array<Record<string, unknown>> = [];
+    const modelArgs: string[] = [];
+    const notifications: string[] = [];
+    const pi = {
+      on(name: string, handler: EventHandler) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+      registerCommand(name: string) {
+        registered.push(name);
+      },
+    } as unknown as ExtensionAPI;
+    const ctx = {
+      sessionManager: { getBranch: () => branch },
+      ui: { notify: (message: string) => notifications.push(message) },
+    } as unknown as ExtensionContext;
+
+    await fixedBtwModel(async (api) => {
+      api.registerCommand("btw", {} as never);
+      api.registerCommand("btw:model", {
+        handler: async (args: string, commandCtx: ExtensionContext) => {
+          modelArgs.push(args);
+          commandCtx.ui.notify("model override set");
+          branch.push({
+            customType: "btw-model-override",
+            data: {
+              action: "set",
+              id: "side-model",
+              provider: "side-provider",
+            },
+            type: "custom",
+          });
+        },
+      } as never);
+    }, "side-provider side-model side-api")(pi);
+
+    for (const handler of handlers.get("session_start") ?? []) await handler({}, ctx);
+    for (const handler of handlers.get("session_tree") ?? []) await handler({}, ctx);
+
+    expect(registered).toEqual(["btw"]);
+    expect(modelArgs).toEqual(["side-provider side-model side-api"]);
+    expect(notifications).toEqual([]);
+  });
 });
