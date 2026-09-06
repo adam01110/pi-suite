@@ -58,9 +58,7 @@ export function fixedBtwModel(
 ): ExtensionFactory {
 	const [provider, id, api, ...extra] = modelArgs.trim().split(/\s+/);
 	if (!provider || !id || !api || extra.length > 0)
-		throw new Error(
-			"BTW model must contain exactly: <provider> <model> <api>",
-		);
+		throw new Error("BTW model must contain exactly: <provider> <model> <api>");
 	const model = { api, id, provider };
 
 	return async (pi) => {

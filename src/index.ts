@@ -108,10 +108,7 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 		{
 			id: "btw",
 			factory: BTW_MODEL
-				? fixedBtwModel(
-						upstreamFactory("pi-btw/extensions/btw.js"),
-						BTW_MODEL,
-					)
+				? fixedBtwModel(upstreamFactory("pi-btw/extensions/btw.js"), BTW_MODEL)
 				: upstreamFactory("pi-btw/extensions/btw.js"),
 			optional: true,
 		},

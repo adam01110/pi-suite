@@ -48,27 +48,24 @@ describe("suite command adapters", () => {
 			ui: { notify: (message: string) => notifications.push(message) },
 		} as unknown as ExtensionContext;
 
-		await fixedBtwModel(
-			async (api) => {
-				api.registerCommand("btw", {} as never);
-				api.registerCommand("btw:model", {
-					handler: async (args: string, commandCtx: ExtensionContext) => {
-						modelArgs.push(args);
-						commandCtx.ui.notify("model override set");
-						branch.push({
-							customType: "btw-model-override",
-							data: {
-								action: "set",
-								id: "side-model",
-								provider: "side-provider",
-							},
-							type: "custom",
-						});
-					},
-				} as never);
-			},
-			"side-provider side-model side-api",
-		)(pi);
+		await fixedBtwModel(async (api) => {
+			api.registerCommand("btw", {} as never);
+			api.registerCommand("btw:model", {
+				handler: async (args: string, commandCtx: ExtensionContext) => {
+					modelArgs.push(args);
+					commandCtx.ui.notify("model override set");
+					branch.push({
+						customType: "btw-model-override",
+						data: {
+							action: "set",
+							id: "side-model",
+							provider: "side-provider",
+						},
+						type: "custom",
+					});
+				},
+			} as never);
+		}, "side-provider side-model side-api")(pi);
 
 		for (const handler of handlers.get("session_start") ?? [])
 			await handler({}, ctx);
