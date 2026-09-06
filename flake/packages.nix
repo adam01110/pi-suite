@@ -49,6 +49,7 @@ _: {
           ../THIRD_PARTY_NOTICES.md
           ../package-lock.json
           ../package.json
+          ../skills
           ../src
         ];
       };
@@ -78,7 +79,7 @@ _: {
         install -Dm755 ${computerUseCosmic} "$computerUseDir/computer-use-linux-cosmic"
 
         mkdir -p "$out"
-        cp -r LICENSE LICENSES THIRD_PARTY_NOTICES.md node_modules package.json src "$out/"
+        cp -r LICENSE LICENSES THIRD_PARTY_NOTICES.md node_modules package.json skills src "$out/"
 
         runHook postInstall
       '';

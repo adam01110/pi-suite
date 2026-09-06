@@ -60,9 +60,9 @@
       "./node_modules/cc-safety-net/dist/pi/index.js"
     ],
     "skills": [
-      "./node_modules/pi-ask-user/skills/ask-user",
-      "./node_modules/pi-mcp-adapter/skills/mcp-scripting",
-      "./node_modules/@agent-sh/computer-use-linux/skills/computer-use-linux"
+      "./skills/ask-user",
+      "./skills/computer-use-linux",
+      "./skills/mcp-scripting"
     ]
   }
 }
