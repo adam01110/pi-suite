@@ -135,6 +135,70 @@ function compactLspDefinition(definition: AnyToolDefinition): AnyToolDefinition 
   };
 }
 
+const SAFE_USER_MESSAGE_RENDERER = Symbol("pi-suite-safe-user-message-renderer");
+
+type UserMessageRendererModule = {
+  renderRawUserMessageLines(
+    component: unknown,
+    width: number,
+    theme: unknown,
+  ): string[] | undefined;
+  renderUserMessageBorder(
+    lines: string[],
+    width: number,
+    theme: unknown,
+    cwd?: string,
+    forcePromptZone?: boolean,
+  ): string[];
+};
+
+export function installSessionSafeUserMessageRenderer(
+  pi: ExtensionAPI,
+  UserMessageComponent: any,
+  renderer: UserMessageRendererModule,
+): void {
+  const prototype = UserMessageComponent?.prototype as Record<PropertyKey, any> | undefined;
+  if (!prototype || typeof prototype.render !== "function") return;
+
+  let state = prototype[SAFE_USER_MESSAGE_RENDERER] as
+    | {
+        fallback: (width: number) => string[];
+        render: (width: number) => string[];
+        activeCtx?: any;
+      }
+    | undefined;
+  if (!state) {
+    state = {
+      fallback: prototype.render,
+      render(width: number) {
+        const ctx = state?.activeCtx;
+        if (!ctx?.hasUI || ctx.mode !== "tui") return state!.fallback.call(this, width);
+        const theme = ctx.ui.theme;
+        const lines = renderer.renderRawUserMessageLines(this, Math.max(1, width - 2), theme);
+        return lines
+          ? renderer.renderUserMessageBorder(lines, width, theme, ctx.cwd, true)
+          : state!.fallback.call(this, width);
+      },
+    };
+    prototype[SAFE_USER_MESSAGE_RENDERER] = state;
+  }
+
+  const ensureInstalled = () => {
+    if (prototype.render !== state!.render) prototype.render = state!.render;
+  };
+  ensureInstalled();
+  pi.on("session_start", (_event: any, ctx: any) => {
+    if (ctx.mode === "tui" && ctx.hasUI && !state!.activeCtx) state!.activeCtx = ctx;
+    ensureInstalled();
+  });
+  pi.on("session_shutdown", (event: any) => {
+    if (event.reason !== "quit") state!.activeCtx = undefined;
+    // A child session shares the component prototype. The upstream renderer's
+    // global cleanup otherwise restores Pi's renderer for the parent session.
+    ensureInstalled();
+  });
+}
+
 export function refreshTranscriptOnSessionStart(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
@@ -166,6 +230,11 @@ export default async function toolRendererAdapter(
     unblock();
   }
 
+  const agent = await importUpstream("@earendil-works/pi-coding-agent");
+  const messageRenderer = await importUpstream(
+    "@vanillagreen/pi-tool-renderer/extensions/tool-renderer/messages.js",
+  );
+  installSessionSafeUserMessageRenderer(pi, agent.UserMessageComponent, messageRenderer.__test);
   // Register after upstream so its session context is ready before repainting.
   refreshTranscriptOnSessionStart(pi);
 
