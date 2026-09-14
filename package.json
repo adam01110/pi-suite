@@ -63,7 +63,8 @@
 		"skills": [
 			"./skills/ask-user",
 			"./skills/computer-use-linux",
-			"./skills/mcp-scripting"
+			"./skills/mcp-scripting",
+			"./skills/subagent-workflows"
 		]
 	}
 }
