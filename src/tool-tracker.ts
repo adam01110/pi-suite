@@ -13,16 +13,13 @@ export interface ToolTracker {
 	restore(): void;
 }
 
-import { applyCompactDescription } from "./tool-descriptions.js";
-
 export function trackToolRegistrations(pi: ExtensionAPI): ToolTracker {
 	const register = pi.registerTool.bind(pi);
 	const definitions = new Map<string, AnyToolDefinition>();
 	const registrations: AnyToolDefinition[] = [];
 	let blocked = new Set<string>();
 
-	pi.registerTool = ((input: AnyToolDefinition) => {
-		const definition = applyCompactDescription(input);
+	pi.registerTool = ((definition: AnyToolDefinition) => {
 		registrations.push(definition);
 		if (blocked.has(definition.name)) return;
 		definitions.set(definition.name, definition);

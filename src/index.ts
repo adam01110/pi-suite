@@ -10,8 +10,8 @@ import {
 import grugReasoning from "./glue/grug-reasoning.js";
 import regularBottomAnchor from "./glue/regular-bottom-anchor.js";
 import rewind from "./glue/rewind.js";
-import toolRenderer from "./glue/tool-renderer.js";
 import tpsCounter from "./glue/tps-counter.js";
+import toolRenderer from "./glue/tool-renderer.js";
 import webAccess from "./glue/web-access.js";
 import workingIndicator from "./glue/working-indicator.js";
 import {
@@ -19,6 +19,7 @@ import {
 	loadModules,
 	type SuiteModule,
 } from "./registry.js";
+import { installDescriptionTrims } from "./tool-descriptions.js";
 import { trackToolRegistrations } from "./tool-tracker.js";
 import { upstreamFactory } from "./upstream.js";
 import rtk from "./vendor/rtk.js";
@@ -189,6 +190,14 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 		{
 			id: "lsp",
 			factory: upstreamFactory("pi-lsp/extensions/pi-lsp/index.js"),
+			optional: true,
+		},
+		{
+			id: "tool-descriptions",
+			// Pure prompt work, no UI. Runs at before_agent_start, after every
+			// session_start collision check (pi-subagents matches its own tool by
+			// exact description), so rewrites cannot trigger the orchestrator warning.
+			factory: (api) => installDescriptionTrims(api, tools),
 			optional: true,
 		},
 		{
