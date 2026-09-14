@@ -79,6 +79,8 @@ _: {
         install -Dm755 ${computerUseBinary} "$computerUseDir/computer-use-linux-linux-${computerUseTarget.nodeArch}"
         install -Dm755 ${computerUseCosmic} "$computerUseDir/computer-use-linux-cosmic"
 
+        substituteInPlace "node_modules/pi-cache-optimizer/index.ts" --replace-fail '💡' $'\uf0eb' --replace-fail '⚠' $'\uf071' --replace-fail 'ℹ' $'\uf129' --replace-fail '✅' $'\uf00c' --replace-fail '❌' $'\uf00d' --replace-fail '🔀' $'\uf0ec' --replace-fail '📉' $'\uf201' --replace-fail '📊' $'\uf080' --replace-fail '📋' $'\uf0ea' --replace-fail '📝' $'\uf044' --replace-fail "️" ""
+
         mkdir -p "$out"
         cp -r LICENSE LICENSES THIRD_PARTY_NOTICES.md node_modules package.json skills src "$out/"
 

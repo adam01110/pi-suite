@@ -6,6 +6,8 @@ import { fixedBtwModel, suppressCommands, suppressNotifications } from "./glue/c
 import regularBottomAnchor from "./glue/regular-bottom-anchor.js";
 import rewind from "./glue/rewind.js";
 import toolRenderer from "./glue/tool-renderer.js";
+import tpsCounter from "./glue/tps-counter.js";
+import workingIndicator from "./glue/working-indicator.js";
 import webAccess from "./glue/web-access.js";
 import { formatSuiteStatus, loadModules, type SuiteModule } from "./registry.js";
 import { trackToolRegistrations } from "./tool-tracker.js";
@@ -139,6 +141,8 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
       optional: true,
     },
     { id: "rewind", factory: rewind, optional: true },
+    { id: "tps-counter", factory: tpsCounter, optional: true },
+    { id: "working-indicator", factory: workingIndicator, optional: true },
     {
       id: "subagents",
       factory: upstreamFactory("@tintinweb/pi-subagents/src/index.js"),
