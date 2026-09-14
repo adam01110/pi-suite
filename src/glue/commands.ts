@@ -1,4 +1,7 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import type { ExtensionFactory } from "../registry.js";
 
 const BTW_MODEL_ENTRY_TYPE = "btw-model-override";
@@ -8,124 +11,135 @@ type EventHandler = (event: unknown, ctx: ExtensionContext) => unknown;
 type EventRegistrar = (event: string, handler: EventHandler) => void;
 
 export function suppressNotifications(
-  factory: ExtensionFactory,
-  prefixes: ReadonlySet<string>,
+	factory: ExtensionFactory,
+	prefixes: ReadonlySet<string>,
 ): ExtensionFactory {
-  return async (pi) => {
-    const originalOn = pi.on;
-    const on = pi.on.bind(pi) as EventRegistrar;
-    pi.on = ((event: string, handler: EventHandler) => {
-      on(event, (payload, ctx) => {
-        const notify = ctx.ui.notify.bind(ctx.ui);
-        const ui = new Proxy(ctx.ui, {
-          get(target, property, receiver) {
-            if (property !== "notify") return Reflect.get(target, property, receiver);
-            return (message: string, type?: "info" | "warning" | "error") => {
-              if (![...prefixes].some((prefix) => message.startsWith(prefix)))
-                notify(message, type);
-            };
-          },
-        });
-        const quietCtx = new Proxy(ctx, {
-          get(target, property, receiver) {
-            if (property === "ui") return ui;
-            return Reflect.get(target, property, receiver);
-          },
-        });
-        return handler(payload, quietCtx);
-      });
-    }) as ExtensionAPI["on"];
+	return async (pi) => {
+		const originalOn = pi.on;
+		const on = pi.on.bind(pi) as EventRegistrar;
+		pi.on = ((event: string, handler: EventHandler) => {
+			on(event, (payload, ctx) => {
+				const notify = ctx.ui.notify.bind(ctx.ui);
+				const ui = new Proxy(ctx.ui, {
+					get(target, property, receiver) {
+						if (property !== "notify")
+							return Reflect.get(target, property, receiver);
+						return (message: string, type?: "info" | "warning" | "error") => {
+							if (![...prefixes].some((prefix) => message.startsWith(prefix)))
+								notify(message, type);
+						};
+					},
+				});
+				const quietCtx = new Proxy(ctx, {
+					get(target, property, receiver) {
+						if (property === "ui") return ui;
+						return Reflect.get(target, property, receiver);
+					},
+				});
+				return handler(payload, quietCtx);
+			});
+		}) as ExtensionAPI["on"];
 
-    try {
-      await factory(pi);
-    } finally {
-      pi.on = originalOn;
-    }
-  };
+		try {
+			await factory(pi);
+		} finally {
+			pi.on = originalOn;
+		}
+	};
 }
 
 export function suppressCommands(
-  factory: ExtensionFactory,
-  names: ReadonlySet<string>,
+	factory: ExtensionFactory,
+	names: ReadonlySet<string>,
 ): ExtensionFactory {
-  return async (pi) => {
-    const register = pi.registerCommand.bind(pi);
-    pi.registerCommand = ((name, definition) => {
-      if (!names.has(name)) register(name, definition);
-    }) as ExtensionAPI["registerCommand"];
+	return async (pi) => {
+		const register = pi.registerCommand.bind(pi);
+		pi.registerCommand = ((name, definition) => {
+			if (!names.has(name)) register(name, definition);
+		}) as ExtensionAPI["registerCommand"];
 
-    try {
-      await factory(pi);
-    } finally {
-      pi.registerCommand = register as ExtensionAPI["registerCommand"];
-    }
-  };
+		try {
+			await factory(pi);
+		} finally {
+			pi.registerCommand = register as ExtensionAPI["registerCommand"];
+		}
+	};
 }
 
-function hasFixedBtwModel(ctx: ExtensionContext, model: { id: string; provider: string }): boolean {
-  const branch = ctx.sessionManager.getBranch();
-  for (let index = branch.length - 1; index >= 0; index--) {
-    const entry = branch[index] as {
-      type?: string;
-      customType?: string;
-      data?: {
-        action?: string;
-        id?: string;
-        provider?: string;
-      };
-    };
-    if (entry.type !== "custom" || entry.customType !== BTW_MODEL_ENTRY_TYPE) continue;
-    return (
-      entry.data?.action === "set" &&
-      entry.data.provider === model.provider &&
-      entry.data.id === model.id
-    );
-  }
-  return false;
+function hasFixedBtwModel(
+	ctx: ExtensionContext,
+	model: { id: string; provider: string },
+): boolean {
+	const branch = ctx.sessionManager.getBranch();
+	for (let index = branch.length - 1; index >= 0; index--) {
+		const entry = branch[index] as {
+			type?: string;
+			customType?: string;
+			data?: {
+				action?: string;
+				id?: string;
+				provider?: string;
+			};
+		};
+		if (entry.type !== "custom" || entry.customType !== BTW_MODEL_ENTRY_TYPE)
+			continue;
+		return (
+			entry.data?.action === "set" &&
+			entry.data.provider === model.provider &&
+			entry.data.id === model.id
+		);
+	}
+	return false;
 }
 
-export function fixedBtwModel(factory: ExtensionFactory, modelArgs: string): ExtensionFactory {
-  const [provider, id, api, ...extra] = modelArgs.trim().split(/\s+/);
-  if (!provider || !id || !api || extra.length > 0)
-    throw new Error("BTW model must contain exactly: <provider> <model> <api>");
-  const model = { api, id, provider };
+export function fixedBtwModel(
+	factory: ExtensionFactory,
+	modelArgs: string,
+): ExtensionFactory {
+	const [provider, id, api, ...extra] = modelArgs.trim().split(/\s+/);
+	if (!provider || !id || !api || extra.length > 0)
+		throw new Error("BTW model must contain exactly: <provider> <model> <api>");
+	const model = { api, id, provider };
 
-  return async (pi) => {
-    const register = pi.registerCommand.bind(pi);
-    let modelCommand: CommandDefinition | undefined;
-    pi.registerCommand = ((name, definition) => {
-      if (name === "btw:model") {
-        modelCommand = definition;
-        return;
-      }
-      register(name, definition);
-    }) as ExtensionAPI["registerCommand"];
+	return async (pi) => {
+		const register = pi.registerCommand.bind(pi);
+		let modelCommand: CommandDefinition | undefined;
+		pi.registerCommand = ((name, definition) => {
+			if (name === "btw:model") {
+				modelCommand = definition;
+				return;
+			}
+			register(name, definition);
+		}) as ExtensionAPI["registerCommand"];
 
-    try {
-      await factory(pi);
-    } finally {
-      pi.registerCommand = register as ExtensionAPI["registerCommand"];
-    }
+		try {
+			await factory(pi);
+		} finally {
+			pi.registerCommand = register as ExtensionAPI["registerCommand"];
+		}
 
-    if (!modelCommand) throw new Error("pi-btw did not register /btw:model");
-    const command = modelCommand;
-    const ensureModel = async (_event: unknown, ctx: ExtensionContext) => {
-      if (hasFixedBtwModel(ctx, model)) return;
-      const quietUi = new Proxy(ctx.ui, {
-        get(target, property, receiver) {
-          if (property === "notify") return () => undefined;
-          return Reflect.get(target, property, receiver);
-        },
-      });
-      const quietCtx = new Proxy(ctx, {
-        get(target, property, receiver) {
-          if (property === "ui") return quietUi;
-          return Reflect.get(target, property, receiver);
-        },
-      });
-      await command.handler(modelArgs, quietCtx as Parameters<typeof command.handler>[1]);
-    };
-    pi.on("session_start", ensureModel);
-    pi.on("session_tree", ensureModel);
-  };
+		if (!modelCommand) throw new Error("pi-btw did not register /btw:model");
+		const command = modelCommand;
+		const ensureModel = async (_event: unknown, ctx: ExtensionContext) => {
+			if (hasFixedBtwModel(ctx, model)) return;
+			const quietUi = new Proxy(ctx.ui, {
+				get(target, property, receiver) {
+					if (property === "notify") return () => undefined;
+					return Reflect.get(target, property, receiver);
+				},
+			});
+			const quietCtx = new Proxy(ctx, {
+				get(target, property, receiver) {
+					if (property === "ui") return quietUi;
+					return Reflect.get(target, property, receiver);
+				},
+			});
+			await command.handler(
+				modelArgs,
+				quietCtx as Parameters<typeof command.handler>[1],
+			);
+		};
+		pi.on("session_start", ensureModel);
+		pi.on("session_tree", ensureModel);
+	};
 }
