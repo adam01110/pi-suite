@@ -2,16 +2,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import atuin from "./glue/atuin.js";
 import autoformatRenderer from "./glue/autoformat-renderer.js";
 import cacheStatusColor from "./glue/cache-status.js";
-import {
-	fixedBtwModel,
-	suppressCommands,
-	suppressNotifications,
-} from "./glue/commands.js";
+import { suppressCommands, suppressNotifications } from "./glue/commands.js";
 import grugReasoning from "./glue/grug-reasoning.js";
+import modelProfile from "./glue/model-profile.js";
 import regularBottomAnchor from "./glue/regular-bottom-anchor.js";
 import rewind from "./glue/rewind.js";
-import tpsCounter from "./glue/tps-counter.js";
 import toolRenderer from "./glue/tool-renderer.js";
+import tpsCounter from "./glue/tps-counter.js";
 import webAccess from "./glue/web-access.js";
 import workingIndicator from "./glue/working-indicator.js";
 import {
@@ -23,8 +20,6 @@ import { installDescriptionTrims } from "./tool-descriptions.js";
 import { trackToolRegistrations } from "./tool-tracker.js";
 import { upstreamFactory } from "./upstream.js";
 import rtk from "./vendor/rtk.js";
-
-const BTW_MODEL = process.env.PI_SUITE_BTW_MODEL;
 
 const IGNORED_NOTIFICATION_PREFIXES = {
 	computerUse: new Set([
@@ -127,9 +122,7 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 		},
 		{
 			id: "btw",
-			factory: BTW_MODEL
-				? fixedBtwModel(upstreamFactory("pi-btw/extensions/btw.js"), BTW_MODEL)
-				: upstreamFactory("pi-btw/extensions/btw.js"),
+			factory: upstreamFactory("pi-btw/extensions/btw.js"),
 			optional: true,
 		},
 		{
@@ -177,7 +170,17 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 			factory: upstreamFactory("pi-ask-user/index.js"),
 			optional: true,
 		},
-		{ id: "rewind", factory: rewind, optional: true },
+		{
+			id: "rewind",
+			factory: rewind,
+			optional: true,
+		},
+		{
+			id: "model-profile",
+			// Startup profile selection and the profile side effects.
+			factory: modelProfile,
+			optional: true,
+		},
 		{ id: "tps-counter", factory: tpsCounter, optional: true },
 		// Pure prompt work, no UI. Appends on top of every earlier system prompt edit.
 		{ id: "grug-reasoning", factory: grugReasoning, optional: true },
