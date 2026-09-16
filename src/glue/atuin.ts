@@ -28,6 +28,14 @@ async function openSearch(
 	}
 }
 
+/** Up arrow on an empty editor opens atuin history search. */
+export function opensHistorySearch(
+	editor: { getText(): string },
+	data: string,
+): boolean {
+	return matchesKey(data, Key.up) && editor.getText().length === 0;
+}
+
 export default async function atuinAdapter(pi: ExtensionAPI): Promise<void> {
 	const [bash, commands, configModule, history, search] = await Promise.all([
 		importUpstream("pi-atuin/bash-tracker.js"),
@@ -70,7 +78,7 @@ export default async function atuinAdapter(pi: ExtensionAPI): Promise<void> {
 			}
 			const previousShortcut = editor.onExtensionShortcut;
 			editor.onExtensionShortcut = (data: string) => {
-				if (matchesKey(data, Key.up) && editor.getText().length === 0) {
+				if (opensHistorySearch(editor, data)) {
 					void openSearch(ctx, editor, history, search.HistorySearchComponent);
 					return true;
 				}

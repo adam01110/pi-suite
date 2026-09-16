@@ -48,6 +48,8 @@ describe("suite command adapters", () => {
 				api.on("session_start", (_event, eventCtx) => {
 					eventCtx.ui.notify("ignore: unavailable", "error");
 					eventCtx.ui.notify("keep", "warning");
+					// Matches only under includes(); startsWith lets it through.
+					eventCtx.ui.notify("docs mention ignore: syntax", "info");
 				});
 			},
 			new Set(["ignore:"]),
@@ -56,6 +58,6 @@ describe("suite command adapters", () => {
 		expect(pi.on as unknown).toBe(originalOn as unknown);
 		for (const handler of handlers.get("session_start") ?? [])
 			await handler({}, ctx);
-		expect(notifications).toEqual(["keep"]);
+		expect(notifications).toEqual(["keep", "docs mention ignore: syntax"]);
 	});
 });

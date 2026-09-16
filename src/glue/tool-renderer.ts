@@ -119,6 +119,22 @@ function compactBatchValidation(
 	};
 }
 
+const COLLAPSED_LSP_RESULT_LINES = 4;
+
+/** Collapsed LSP results keep the first lines plus a truncated-row count. */
+export function collapsedLspResult(
+	raw: string,
+	expanded: boolean,
+): { text: string; more: number } {
+	if (expanded) return { text: raw, more: 0 };
+	const lines = raw.split("\n");
+	const visible = lines.slice(0, COLLAPSED_LSP_RESULT_LINES);
+	return {
+		text: visible.join("\n"),
+		more: Math.max(0, lines.length - visible.length),
+	};
+}
+
 function compactLspDefinition(
 	definition: AnyToolDefinition,
 ): AnyToolDefinition {
@@ -143,14 +159,9 @@ function compactLspDefinition(
 					0,
 				);
 			if (!raw) return new Text(theme.fg("dim", "no results"), 0, 0);
-			const lines = raw.split("\n");
-			const visible = expanded ? lines : lines.slice(0, 4);
-			const suffix =
-				!expanded && lines.length > visible.length
-					? `\n${theme.fg("dim", `… ${lines.length - visible.length} more`)}`
-					: "";
+			const { text: visible, more } = collapsedLspResult(raw, expanded);
 			return new Text(
-				`${theme.fg("toolOutput", visible.join("\n"))}${suffix}`,
+				`${theme.fg("toolOutput", visible)}${more > 0 ? `\n${theme.fg("dim", `… ${more} more`)}` : ""}`,
 				0,
 				0,
 			);

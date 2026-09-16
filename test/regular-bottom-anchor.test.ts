@@ -17,7 +17,11 @@ function component(lines: string[], rendered?: () => void) {
 
 function createTui(rows: number): TUI & { mode: "regular" } {
 	const widgetsAbove = new Container();
-	const root = new Container();
+	const root = new Container() as unknown as TUI & {
+		mode: "regular";
+		terminal: { columns: number; rows: number };
+		render(width: number): string[];
+	};
 	root.children = [
 		component(["message"]),
 		component([]),
@@ -27,11 +31,29 @@ function createTui(rows: number): TUI & { mode: "regular" } {
 		component([]),
 		component(["footer"]),
 	];
+	// Real TUIs recompute layout heights every frame, so the getter returns a
+	// fresh layout: mutations by the anchor must not leak across frames.
+	const heights = [1, 0, 0, 0, 1, 0, 1];
+	let currentWidth = 0;
+	Object.defineProperty(root, "mouseLayout", {
+		get: () => {
+			if (root.children.length !== 7) return undefined;
+			return {
+				width: currentWidth,
+				children: heights.map((height) => ({ height })),
+			};
+		},
+	});
 	Object.assign(root, {
 		mode: "regular",
 		terminal: { columns: 80, rows },
 	});
-	return root as unknown as ReturnType<typeof createTui>;
+	const originalRender = root.render.bind(root);
+	root.render = (width: number) => {
+		currentWidth = width;
+		return originalRender(width);
+	};
+	return root as unknown as TUI & { mode: "regular" };
 }
 
 describe("regular bottom anchor", () => {

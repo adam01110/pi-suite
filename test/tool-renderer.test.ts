@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	batchValidationText,
+	collapsedLspResult,
 	diagnosticsDisplayText,
 	latestDiagnosticsResult,
 } from "../src/glue/tool-renderer.js";
@@ -54,6 +55,31 @@ describe("LSP diagnostics renderer compatibility", () => {
 				text: "LSP diagnostics:\n\nnixd: unused argument",
 			},
 		]);
+	});
+});
+
+describe("LSP result truncation", () => {
+	const fiveLines = "one\ntwo\nthree\nfour\nfive";
+
+	test("collapses long results to four lines plus a remainder count", () => {
+		expect(collapsedLspResult(fiveLines, false)).toEqual({
+			text: "one\ntwo\nthree\nfour",
+			more: 1,
+		});
+	});
+
+	test("keeps exactly-four-line results fully visible when collapsed", () => {
+		expect(collapsedLspResult("one\ntwo\nthree\nfour", false)).toEqual({
+			text: "one\ntwo\nthree\nfour",
+			more: 0,
+		});
+	});
+
+	test("expansion shows every line without a remainder", () => {
+		expect(collapsedLspResult(fiveLines, true)).toEqual({
+			text: fiveLines,
+			more: 0,
+		});
 	});
 });
 

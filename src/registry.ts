@@ -57,6 +57,14 @@ export async function loadModules(
 	return results;
 }
 
+export function statusNotifyLevel(
+	results: readonly ModuleResult[],
+): "info" | "warning" {
+	return results.some((result) => result.state === "failed")
+		? "warning"
+		: "info";
+}
+
 export function formatSuiteStatus(results: readonly ModuleResult[]): string {
 	const list = (state: ModuleState) =>
 		results
