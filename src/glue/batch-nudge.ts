@@ -8,13 +8,16 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
  * - serial probing: a solo read/grep/find/ls/bash call right after another solo
  *   call of the same tool. Same tool only: a grep -> read chain is usually
  *   dependent on the previous result.
+ * - separate parallel probes: two or more read/grep/find/ls/bash calls in one
+ *   message. They run, but as separate entries: one tool_batch call renders as
+ *   a single stack and shares the aggregate output cap.
  * - chained bash: `;` or `&&`/`||` in a bash command. Several commands belong
  *   in one tool_batch call, not glued into one shell line.
  *
- * Every such call is blocked, except the one that directly follows a blocked
- * call: that is the re-issue, and letting it run is what keeps the model from
- * looping on the nudge instead of making progress. A batched message, a
- * different tool, or a user turn ends the run.
+ * Every such call is blocked, except calls in the message that directly
+ * follows a blocked one: that is the re-issue, and letting it run is what keeps
+ * the model from looping on the nudge instead of making progress. A tool_batch
+ * call, a non-probe tool, or a user turn ends the run.
  */
 const NUDGE_REASON =
 	"Serial or chained probing blocked. Put the independent read/grep/find/ls/bash calls in ONE tool_batch call with {tool, args} entries; never join commands with ; or &&. If this call depends on the previous result, re-issue it unchanged and it will run.";
@@ -50,6 +53,7 @@ type SessionEntryLike = {
 type Classification =
 	| { kind: "batched" }
 	| { kind: "probe"; tool: string }
+	| { kind: "separate" }
 	| { kind: "skip" };
 
 function toolCalls(message: SessionEntryLike["message"]): ToolCallContent[] {
@@ -73,7 +77,13 @@ function batchSize(call: ToolCallContent): number {
 function classify(message: SessionEntryLike["message"]): Classification {
 	const calls = toolCalls(message);
 	if (calls.length === 0) return { kind: "skip" };
-	if (calls.length > 1) return { kind: "batched" };
+	if (calls.length > 1) {
+		// Several probe calls in one message run concurrently, so they are not
+		// serial probing; they are still nudged into a real tool_batch call.
+		return calls.every((call) => PROBE_TOOLS.has(call.name))
+			? { kind: "separate" }
+			: { kind: "batched" };
+	}
 	const [call] = calls;
 	// A batch of one is a solo call in disguise, and a batch with no usable
 	// entries batches nothing: neither ends a serial run.
@@ -145,11 +155,11 @@ export default function batchNudge(pi: ExtensionAPI): void {
 		if (currentIndex < 0) return;
 
 		const current = classify(entries[currentIndex].message);
-		// Already batching, or not a probe at all.
-		if (current.kind !== "probe") return;
+		// Already batching with tool_batch, or not a probe at all.
+		if (current.kind === "batched" || current.kind === "skip") return;
 
-		// Only the closest earlier probe decides. Skip entries that batch
-		// nothing, stop at anything that ends the run.
+		// Only the closest earlier entry that did something decides. Skip entries
+		// that batch nothing, stop at anything that ends the run.
 		let previousSameTool = false;
 		let previousWasBlocked = false;
 		for (let index = currentIndex - 1; index >= 0; index--) {
@@ -159,20 +169,26 @@ export default function batchNudge(pi: ExtensionAPI): void {
 			if (!isAssistant(entry)) continue;
 			const previous = classify(entry.message);
 			if (previous.kind === "skip") continue;
-			if (previous.kind === "batched" || previous.tool !== current.tool) break;
 			if (blockedEntries.has(entry.id)) {
 				previousWasBlocked = true;
 				break;
 			}
+			if (
+				previous.kind !== "probe" ||
+				current.kind !== "probe" ||
+				previous.tool !== current.tool
+			)
+				break;
 			previousSameTool = true;
 			break;
 		}
 
 		const chained =
-			event.toolName === "bash" &&
+			current.kind === "probe" &&
+			current.tool === "bash" &&
 			isChained((event.input as { command?: unknown }).command);
 		if (previousWasBlocked) return;
-		if (!previousSameTool && !chained) return;
+		if (current.kind !== "separate" && !previousSameTool && !chained) return;
 
 		rememberBlock(entries[currentIndex].id);
 		return { block: true, reason: NUDGE_REASON };

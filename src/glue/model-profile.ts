@@ -428,7 +428,8 @@ async function promptThinking(
 }
 
 /**
- * Profile selection, shown on startup and on `/new`. Lists the configured
+ * Profile selection, shown on a fresh startup and on `/new`, skipped when the
+ * startup loaded an existing session (`-s`, `-c`, `-r`). Lists the configured
  * profiles from PI_SUITE_PROFILE_AGENTS; picking one sets the session model
  * from `session.model` when present (side effects then run through
  * model_select) or keeps the current default (profiles without a session
@@ -518,9 +519,36 @@ async function pickProfile(
 /** `/new` rebuilds the session from pi's default model, so it asks again. */
 const PICK_REASONS: ReadonlySet<string> = new Set(["startup", "new"]);
 
+/**
+ * True when the runtime already loaded a conversation. `-s`/`--session`,
+ * `-c`/`--continue`, `-r`/`--resume`, and an existing `--session-id` all open
+ * a session file before `session_start`, which pi still reports as
+ * `reason: "startup"`, so the reason alone cannot tell a resumed session from
+ * a fresh one. Entry count cannot either: a fresh session already carries its
+ * `model_change` and `thinking_level_change` entries by then. Only the entry
+ * kinds that hold conversation count as history.
+ */
+const HISTORY_ENTRY_TYPES: ReadonlySet<string> = new Set([
+	"message",
+	"compaction",
+	"branch_summary",
+]);
+
+function hasSessionHistory(ctx: ExtensionContext): boolean {
+	try {
+		const entries = ctx.sessionManager?.getEntries() ?? [];
+		return entries.some((entry) => HISTORY_ENTRY_TYPES.has(entry.type));
+	} catch {
+		return false;
+	}
+}
+
 function registerProfileSelect(pi: ExtensionAPI): void {
 	pi.on("session_start", async (event, ctx) => {
 		if (!PICK_REASONS.has(event.reason) || !ctx.hasUI) return;
+		// A resumed session carries its own model; asking again would force the
+		// user to remember which profile that session was started with.
+		if (event.reason === "startup" && hasSessionHistory(ctx)) return;
 		await pickProfile(pi, ctx);
 	});
 }

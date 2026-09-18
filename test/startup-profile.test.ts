@@ -61,6 +61,7 @@ function makeHarness() {
 		hasUI: true,
 		model: CODEX_MODEL,
 		thinkingLevel: "medium",
+		sessionManager: { getEntries: () => [] as unknown[] },
 		modelRegistry: {
 			getProviderDisplayName: (provider: string) => provider,
 			find: (provider: string, _id: string) =>
@@ -239,6 +240,42 @@ describe("startup profile select", () => {
 		});
 	});
 
+	test("skips the picker when startup loaded an existing session", async () => {
+		await withConfig(JSON.stringify(CONFIG), async () => {
+			const { handlers, setModelCalls, ctx } = makeHarness();
+			// `pi -s <session>` / `-c` / `-r` open a session file before
+			// session_start while still reporting reason "startup".
+			(ctx.sessionManager as { getEntries: () => unknown[] }).getEntries =
+				() => [{ type: "message" }];
+			setSelect(ctx, async () => {
+				throw new Error("the picker opened for a resumed session");
+			});
+
+			for (const handler of handlers.get("session_start") ?? [])
+				await handler({ reason: "startup" }, ctx);
+
+			expect(setModelCalls).toEqual([]);
+		});
+	});
+
+	test("asks on startup when only default-change entries exist", async () => {
+		await withConfig(JSON.stringify(CONFIG), async () => {
+			const { handlers, setModelCalls, ctx } = makeHarness();
+			// A fresh session already records its model and thinking level
+			// before session_start; neither is conversation history.
+			(ctx.sessionManager as { getEntries: () => unknown[] }).getEntries =
+				() => [{ type: "model_change" }, { type: "thinking_level_change" }];
+			setSelect(ctx, async (_title, options) => options[1]);
+
+			for (const handler of handlers.get("session_start") ?? [])
+				await handler({ reason: "startup" }, ctx);
+
+			expect(setModelCalls).toMatchObject([
+				{ provider: "opencode-go", id: "glm-5.3-flash" },
+			]);
+		});
+	});
+
 	test("asks again on /new", async () => {
 		await withConfig(JSON.stringify(CONFIG), async () => {
 			const { handlers, setModelCalls, ctx } = makeHarness();
@@ -284,7 +321,9 @@ describe("startup profile select", () => {
 
 			expect(
 				JSON.parse(readFileSync(lastProfileFile(agentDir), "utf8")),
-			).toEqual({ profile: "go-glm" });
+			).toEqual({
+				profile: "go-glm",
+			});
 		});
 	});
 });

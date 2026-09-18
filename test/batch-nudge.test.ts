@@ -153,6 +153,47 @@ describe("batch nudge", () => {
 		expect(h.block({ id: "r1", name: "read" })).toBeUndefined();
 	});
 
+	test("blocks separate parallel probe calls in one message", () => {
+		const h = setup();
+		h.entry("user");
+		h.entry("assistant", [
+			{ id: "b1", name: "bash", args: { command: "ls" } },
+			{ id: "b2", name: "bash", args: { command: "pwd" } },
+		]);
+		expect(
+			h.block({ id: "b1", name: "bash", args: { command: "ls" } })?.block,
+		).toBe(true);
+	});
+
+	test("allows a mixed message with a non-probe call", () => {
+		const h = setup();
+		h.entry("user");
+		h.entry("assistant", [
+			{ id: "r1", name: "read" },
+			{ id: "e1", name: "edit" },
+		]);
+		expect(h.block({ id: "r1", name: "read" })).toBeUndefined();
+	});
+
+	test("lets the message after a blocked one through", () => {
+		const h = setup();
+		h.entry("user");
+		h.entry("assistant", [
+			{ id: "b1", name: "bash", args: { command: "ls" } },
+			{ id: "b2", name: "bash", args: { command: "pwd" } },
+		]);
+		expect(
+			h.block({ id: "b1", name: "bash", args: { command: "ls" } })?.block,
+		).toBe(true);
+		h.entry("assistant", [
+			{ id: "b3", name: "bash", args: { command: "ls" } },
+			{ id: "b4", name: "bash", args: { command: "pwd" } },
+		]);
+		expect(
+			h.block({ id: "b3", name: "bash", args: { command: "ls" } }),
+		).toBeUndefined();
+	});
+
 	test("treats a two-entry tool_batch as batching and resets the run", () => {
 		const h = setup();
 		h.entry("user");
