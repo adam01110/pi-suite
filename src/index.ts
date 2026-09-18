@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import atuin from "./glue/atuin.js";
+import batchNudge from "./glue/batch-nudge.js";
 import autoformatRenderer from "./glue/autoformat-renderer.js";
 import cacheStatusColor from "./glue/cache-status.js";
 import { suppressCommands, suppressNotifications } from "./glue/commands.js";
@@ -172,6 +173,8 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
     { id: "tps-counter", factory: tpsCounter, optional: true },
     // Pure prompt work, no UI. Appends on top of every earlier system prompt edit.
     { id: "grug-reasoning", factory: grugReasoning, optional: true },
+    // Pure event work, no UI. Blocks serial same-tool lookups weak models emit.
+    { id: "batch-nudge", factory: batchNudge, optional: true },
     { id: "working-indicator", factory: workingIndicator, optional: true },
     {
       id: "subagents",
