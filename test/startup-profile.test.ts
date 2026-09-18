@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
 	ExtensionAPI,
+	ExtensionCommandContext,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import modelProfile from "../src/glue/model-profile.js";
@@ -12,6 +13,7 @@ type EventHandler = (
 	event: unknown,
 	ctx: ExtensionContext,
 ) => Promise<void> | void;
+type RegisteredCommand = Parameters<ExtensionAPI["registerCommand"]>[1];
 
 const CODEX_MODEL = {
 	provider: "openai-codex",
@@ -36,11 +38,15 @@ const CONFIG = {
 };
 
 function makeHarness() {
+	const commands = new Map<string, RegisteredCommand>();
 	const handlers = new Map<string, EventHandler[]>();
 	const setModelCalls: Array<{ provider: string; id: string }> = [];
 	const pi = {
 		on(name: string, handler: EventHandler) {
 			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+		},
+		registerCommand(name: string, command: RegisteredCommand) {
+			commands.set(name, command);
 		},
 		setModel: async (model: { provider: string; id: string }) => {
 			setModelCalls.push(model);
@@ -71,7 +77,7 @@ function makeHarness() {
 		},
 	} as unknown as ExtensionContext;
 
-	return { handlers, setModelCalls, ctx };
+	return { commands, handlers, setModelCalls, ctx };
 }
 
 function withConfig(
@@ -121,6 +127,26 @@ function setSelect(
 }
 
 describe("startup profile select", () => {
+	test("registers /profile with completion and direct switching", async () => {
+		await withConfig(JSON.stringify(CONFIG), async () => {
+			const { commands, setModelCalls, ctx } = makeHarness();
+			const command = commands.get("profile");
+			expect(command).toBeDefined();
+			expect(command?.getArgumentCompletions?.("go")).toEqual([
+				{ value: "go-glm", label: "go-glm" },
+			]);
+			setSelect(ctx, async () => {
+				throw new Error("direct profile switching opened the selector");
+			});
+
+			await command?.handler("go-glm", ctx as ExtensionCommandContext);
+
+			expect(setModelCalls).toMatchObject([
+				{ provider: "opencode-go", id: "glm-5.3-flash" },
+			]);
+		});
+	});
+
 	test("lists configured profiles and switches on pick", async () => {
 		await withConfig(JSON.stringify(CONFIG), async () => {
 			const { handlers, setModelCalls, ctx } = makeHarness();

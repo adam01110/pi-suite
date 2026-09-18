@@ -441,14 +441,23 @@ async function promptThinking(
 async function pickProfile(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
+	requested?: string,
 ): Promise<void> {
 	const config = loadProfileConfig();
 	if (!config || Object.keys(config).length === 0) return;
+	if (requested && !config[requested]) {
+		ctx.ui.notify(
+			`Unknown profile "${requested}". Available: ${Object.keys(config).join(", ")}`,
+			"error",
+		);
+		return;
+	}
 
 	const dir = agentDirPath();
 	const lastPicked = readLastProfile(dir);
 	const entries: Array<{ key: string; model?: Model<any> }> = [];
-	for (const key of Object.keys(config)) {
+	const keys = requested ? [requested] : Object.keys(config);
+	for (const key of keys) {
 		const ref = config[key].session?.model;
 		if (!ref) {
 			entries.push({ key });
@@ -463,12 +472,18 @@ async function pickProfile(
 		// Unauthenticated profiles are not selectable.
 		if (model) entries.push({ key, model });
 	}
-	if (entries.length === 0) return;
+	if (entries.length === 0) {
+		if (requested)
+			ctx.ui.notify(`Profile "${requested}" has no available model`, "error");
+		return;
+	}
 
 	const options = entries.map((entry) =>
 		entry.key === lastPicked ? `${entry.key}  (last used)` : entry.key,
 	);
-	const choice = await ctx.ui.select("Model profile:", options);
+	const choice = requested
+		? options[0]
+		: await ctx.ui.select("Model profile:", options);
 	if (!choice) return;
 
 	const picked = entries[options.indexOf(choice)];
@@ -512,6 +527,29 @@ function registerProfileSelect(pi: ExtensionAPI): void {
 
 export default function modelProfile(pi: ExtensionAPI): void {
 	registerProfileSelect(pi);
+
+	pi.registerCommand("profile", {
+		description: "Switch model profile",
+		getArgumentCompletions: (prefix) => {
+			const config = loadProfileConfig();
+			if (!config) return null;
+			const items = Object.keys(config)
+				.filter((name) => name.startsWith(prefix))
+				.map((name) => ({ value: name, label: name }));
+			return items.length > 0 ? items : null;
+		},
+		handler: async (args, ctx) => {
+			const requested = args.trim();
+			if (!requested && !ctx.hasUI) {
+				ctx.ui.notify(
+					"Profile name required outside interactive mode",
+					"error",
+				);
+				return;
+			}
+			await pickProfile(pi, ctx, requested || undefined);
+		},
+	});
 
 	pi.on("model_select", async (event, ctx) => {
 		// Restores replay the session's own model/level choices.
