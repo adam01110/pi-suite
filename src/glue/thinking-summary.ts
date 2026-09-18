@@ -2,7 +2,9 @@ import type {
 	AssistantMessage,
 	Context,
 	Model,
+	ModelThinkingLevel,
 	SimpleStreamOptions,
+	ThinkingLevel,
 } from "@earendil-works/pi-ai";
 import { contentText } from "@earendil-works/pi-ai";
 import {
@@ -20,22 +22,23 @@ import { loadProfileConfig, profileFor } from "./model-profile.js";
  *
  * - The label is plain text (`thinking`) instead of the nerd-font glyph the
  *   QOL module installs by default.
- * - When a thinking block finishes streaming, the fast profile model writes a
- *   one-line summary of it and that block's label becomes
+ * - When a thinking block finishes streaming, its collapsed label becomes
  *   `thinking · <summary>`. Providers that already ship reasoning summaries
- *   (OpenAI responses/codex, Google) are skipped, because their thinking
- *   content already is the provider's summary.
+ *   (OpenAI responses/codex, Google) hand us the short text themselves, so
+ *   that text is used as-is. For everything else the fast profile model
+ *   writes a one-line summary.
  *
  * Summaries are keyed by (message timestamp, content index) and applied by
  * wrapping `AssistantMessageComponent.prototype.updateContent` — the same
  * seam QOL patches for its thinking timer. Histories replayed from a session
  * file keep the plain label: only live blocks are summarized.
  *
- * The summary call never thinks: `reasoning` is left out, which every pi-ai
- * adapter except the codex transport reads as "no thinking", and the codex
- * transport is called with `reasoningEffort: "none"`. Fast models whose
- * reasoning cannot be silenced that way are skipped rather than used
- * (see {@link canSilenceThinking}).
+ * The summary call never spends a full thought budget: `reasoning` is left
+ * out, which every pi-ai adapter except the codex transport reads as "no
+ * thinking", and the codex transport is called with `reasoningEffort:
+ * "none"`. Models that cannot switch reasoning off at all (deepseek, glm,
+ * Google) are asked for their weakest supported level instead (see
+ * {@link summaryReasoning}).
  */
 
 /** Collapsed label before a summary exists. */
@@ -50,6 +53,9 @@ const MAX_SUMMARY_INPUT_CHARS = 8_000;
 const SUMMARY_MAX_TOKENS = 80;
 /** Longest accepted summary before ellipsis. */
 const SUMMARY_MAX_CHARS = 160;
+/** Shortest provider-authored summary worth showing in a label. */
+export const MIN_PROVIDER_SUMMARY_CHARS = 80;
+
 /** Concurrent summary requests; extra blocks keep the plain label. */
 const MAX_IN_FLIGHT = 2;
 
@@ -207,14 +213,27 @@ function labelTarget(
 	return undefined;
 }
 
-function labelComponents(component: HiddenThinkingComponent): LabelTarget[] {
+/**
+ * Collapsed labels paired with their thinking run.
+ *
+ * pi renders every thinking run as one child: a `MouseRegion` around the
+ * collapsed label, or around the expanded `Markdown`. Runs are therefore
+ * counted in child order, which keeps the mapping right when only some runs
+ * are collapsed (per-block mouse toggles do not change the global setting).
+ */
+function labelComponents(
+	component: HiddenThinkingComponent,
+): Array<{ runIndex: number; target: LabelTarget }> {
 	const children = component.contentContainer?.children;
 	if (!Array.isArray(children)) return [];
 	const expected = stripAnsi(component.hiddenThinkingLabel ?? "");
-	const labels: LabelTarget[] = [];
+	const labels: Array<{ runIndex: number; target: LabelTarget }> = [];
+	let runIndex = 0;
 	for (const child of children) {
+		const wrapped = (child as { child?: unknown } | undefined)?.child;
 		const target = labelTarget(child, expected);
-		if (target) labels.push(target);
+		if (target) labels.push({ runIndex, target });
+		if (wrapped !== undefined || target) runIndex++;
 	}
 	return labels;
 }
@@ -227,8 +246,7 @@ export function applyThinkingSummaries(
 	lookup: SummaryLookup = (key) => summaries.get(key),
 ): void {
 	const target = component as HiddenThinkingComponent;
-	if (!target?.hideThinkingBlock) return;
-	const message = target.lastMessage;
+	const message = target?.lastMessage;
 	if (!message || !Array.isArray(message.content)) return;
 	if (typeof message.timestamp !== "number") return;
 
@@ -236,9 +254,7 @@ export function applyThinkingSummaries(
 	if (labels.length === 0) return;
 
 	const runs = thinkingRuns(message.content as readonly ThinkingBlock[]);
-	for (let runIndex = 0; runIndex < runs.length; runIndex++) {
-		const label = labels[runIndex];
-		if (!label) return;
+	for (const { runIndex, target: label } of labels) {
 		const summary = runs[runIndex]
 			?.map((index) => lookup(summaryKey(message.timestamp, index)))
 			.find((value) => value !== undefined);
@@ -272,17 +288,31 @@ export function installThinkingSummaryPatch(
 	};
 }
 
-/** Fast profile model, resolved from the profile the session model belongs to. */
+/**
+ * Summarizer model: the profile's `fast.model`, or the session model when that
+ * entry only pins a thinking level — the same inherit rule the suite applies to
+ * subagent role tokens. A profile that names an unresolvable model yields
+ * nothing rather than silently falling back to the session model.
+ */
 export function fastModel(
 	ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
 ): Model<any> | undefined {
 	const config = loadProfileConfig();
-	if (!config || !ctx.model) return undefined;
-	const ref = profileFor(config, ctx.model)?.fast?.model;
-	if (!ref) return undefined;
+	if (!ctx.model) return undefined;
+	const ref = config ? profileFor(config, ctx.model)?.fast?.model : undefined;
+	if (!ref) return ctx.model;
 	const slash = ref.indexOf("/");
 	if (slash === -1) return undefined;
 	return ctx.modelRegistry.find(ref.slice(0, slash), ref.slice(slash + 1));
+}
+
+/** Why a block was left with the plain label, or which level is in use. */
+let skipNotice: string | undefined;
+
+function noticeSkipOnce(ctx: ExtensionContext, reason: string): void {
+	if (skipNotice === reason) return;
+	skipNotice = reason;
+	ctx.ui.notify(`Thinking summaries: ${reason}`, "info");
 }
 
 async function requestSummary(
@@ -290,6 +320,7 @@ async function requestSummary(
 	key: string,
 	model: Model<any>,
 	thinking: string,
+	reasoning: ThinkingLevel | undefined,
 ): Promise<void> {
 	inFlight += 1;
 	try {
@@ -312,6 +343,7 @@ async function requestSummary(
 				signal: ctx.signal,
 				maxTokens: SUMMARY_MAX_TOKENS,
 				cacheRetention: "none",
+				...(reasoning ? { reasoning } : {}),
 			},
 		);
 		const summary = cleanSummary(contentText(response.content, " "));
@@ -352,7 +384,7 @@ async function completeWithoutThinking(
 }
 
 /**
- * Whether the summary call is guaranteed not to think, read off the pi-ai
+ * Whether the summary call can be guaranteed not to think, read off the pi-ai
  * adapters for an absent `reasoning` option:
  *
  * - `anthropic-messages`, `bedrock-converse-stream`,
@@ -361,12 +393,12 @@ async function completeWithoutThinking(
  *   `thinkingLevelMap.off ?? "none"`; a `null` off means the model cannot
  *   disable it, and github-copilot skips that fallback entirely.
  * - `openai-completions`: the `zai`, `qwen`, `qwen-chat-template`, and
- *   `together` formats send an explicit disable flag; every other format
- *   relies on a string `thinkingLevelMap.off`.
+ *   `together` formats always send a disable flag; `deepseek`, `openrouter`,
+ *   and `string-thinking` send one while `thinkingLevelMap.off` is not `null`.
  * - `openai-codex-responses`: forced to `effort: "none"` explicitly.
  *
  * Anything else (Google, pi-messages, cloudflare, custom APIs) has no
- * verifiable way to silence reasoning, so it is not used as a summarizer.
+ * verifiable way to silence reasoning.
  */
 export function canSilenceThinking(
 	model: Pick<
@@ -391,11 +423,55 @@ export function canSilenceThinking(
 	return false;
 }
 
+/** pi's thinking levels, weakest first. */
+const LEVEL_ORDER: readonly ModelThinkingLevel[] = [
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+];
+
+/**
+ * Lowest thinking level the model accepts, mirroring pi's own
+ * `getSupportedThinkingLevels`: `null` marks a level unsupported, and `xhigh`
+ * and `max` are opt-in.
+ */
+export function lowestThinkingLevel(
+	model: Pick<Model<any>, "reasoning" | "thinkingLevelMap">,
+): ThinkingLevel | undefined {
+	if (!model.reasoning) return undefined;
+	return LEVEL_ORDER.filter((level) => {
+		const mapped = model.thinkingLevelMap?.[level];
+		if (mapped === null) return false;
+		if (level === "xhigh" || level === "max") return mapped !== undefined;
+		return true;
+	}).find((level) => level !== "off");
+}
+
+/**
+ * `reasoning` for the summary call. Models that can switch thinking off get
+ * nothing; models that cannot (deepseek, glm, Google, ...) get their lowest
+ * supported level, so the summary still runs without a full thought budget.
+ */
+export function summaryReasoning(
+	model: Pick<
+		Model<any>,
+		"api" | "provider" | "reasoning" | "thinkingLevelMap" | "compat"
+	>,
+): ThinkingLevel | undefined {
+	if (canSilenceThinking(model)) return undefined;
+	return lowestThinkingLevel(model);
+}
+
 export default function thinkingSummary(pi: ExtensionAPI): void {
 	installThinkingSummaryPatch();
 
 	pi.on("session_start", (_event, ctx) => {
 		summaries.clear();
+		skipNotice = undefined;
 		if (!ctx.hasUI) return;
 		// Runs after QOL's session_start handler, replacing its glyph label.
 		ctx.ui.setHiddenThinkingLabel(THINKING_LABEL);
@@ -404,21 +480,54 @@ export default function thinkingSummary(pi: ExtensionAPI): void {
 	pi.on("message_update", (event, ctx) => {
 		const update = event.assistantMessageEvent;
 		if (update?.type !== "thinking_end") return;
-		if (!ctx.hasUI || inFlight >= MAX_IN_FLIGHT) return;
+		if (!ctx.hasUI) return;
 
 		const partial = update.partial;
-		if (!needsSummary(partial?.api, update.content ?? "")) return;
-
+		const thinking = (update.content ?? "").trim();
 		const key = summaryKey(partial.timestamp, update.contentIndex);
 		if (summaries.has(key)) return;
+
+		// Providers that author reasoning summaries (OpenAI responses/codex,
+		// Google) already handed us the short text: label it, no model call.
+		if (providerSendsSummaries(partial?.api)) {
+			const written = cleanSummary(thinking);
+			if (written && thinking.length >= MIN_PROVIDER_SUMMARY_CHARS) {
+				summaries.set(key, written);
+			}
+			return;
+		}
+
+		if (inFlight >= MAX_IN_FLIGHT) return;
+		if (!needsSummary(partial?.api, thinking)) return;
+
 		const model = fastModel(ctx);
-		if (!model || !canSilenceThinking(model)) return;
+		if (!model) {
+			noticeSkipOnce(ctx, "no fast model could be resolved for this profile");
+			return;
+		}
+
+		// Models that cannot switch reasoning off run at their weakest level.
+		const reasoning = summaryReasoning(model);
+		if (!reasoning && !canSilenceThinking(model)) {
+			noticeSkipOnce(
+				ctx,
+				`${model.provider}/${model.id} has no usable thinking level`,
+			);
+			return;
+		}
+		if (reasoning) {
+			noticeSkipOnce(
+				ctx,
+				`${model.provider}/${model.id} cannot disable reasoning; using ${reasoning}`,
+			);
+		}
 
 		void requestSummary(
 			ctx,
 			key,
 			model,
-			(update.content ?? "").trim().slice(0, MAX_SUMMARY_INPUT_CHARS),
+			thinking.slice(0, MAX_SUMMARY_INPUT_CHARS),
+			reasoning,
 		);
 	});
 }

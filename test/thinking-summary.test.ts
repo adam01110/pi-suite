@@ -14,10 +14,12 @@ import thinkingSummary, {
 	canSilenceThinking,
 	cleanSummary,
 	installThinkingSummaryPatch,
+	lowestThinkingLevel,
 	needsSummary,
 	providerSendsSummaries,
 	summaryKey,
 	summaryLabel,
+	summaryReasoning,
 	THINKING_LABEL,
 	thinkingRuns,
 } from "../src/glue/thinking-summary.js";
@@ -182,15 +184,44 @@ describe("collapsed label application", () => {
 		expect(label.text).toBe("thinking · New summary");
 	});
 
-	test("leaves expanded thinking and label-less containers alone", () => {
+	test("labels a run collapsed per block, with the global setting off", () => {
 		const label = new FakeText(THINKING_LABEL);
 		const expanded = new FakeComponent(content, [new FakeRegion(label)]);
 		expanded.hideThinkingBlock = false;
-		applyThinkingSummaries(expanded, () => "Summary");
-		expect(label.text).toBe(THINKING_LABEL);
 
-		const none = new FakeComponent(content, []);
+		applyThinkingSummaries(expanded, () => "Summary");
+
+		// The label component only exists because that run is collapsed.
+		expect(label.text).toBe("thinking · Summary");
+	});
+
+	test("maps labels to runs when only later runs are collapsed", () => {
+		const expandedRun = new FakeText("raw reasoning text");
+		const collapsedRun = new FakeText(THINKING_LABEL);
+		const component = new FakeComponent(content, [
+			new FakeRegion(expandedRun),
+			new FakeRegion(collapsedRun),
+		]);
+
+		applyThinkingSummaries(component, (key) =>
+			key === summaryKey(component.lastMessage.timestamp, 2)
+				? "Second run"
+				: "First run",
+		);
+
+		expect(expandedRun.text).toBe("raw reasoning text");
+		expect(collapsedRun.text).toBe("thinking · Second run");
+	});
+
+	test("leaves containers without collapsed labels alone", () => {
+		const body = new FakeText("answer body");
+		const none = new FakeComponent(content, [body]);
 		expect(() => applyThinkingSummaries(none, () => "Summary")).not.toThrow();
+		expect(body.text).toBe("answer body");
+
+		expect(() =>
+			applyThinkingSummaries(new FakeComponent(content, []), () => "Summary"),
+		).not.toThrow();
 	});
 });
 
@@ -259,6 +290,7 @@ function codexFastModel() {
 function setupSession(api: string, fastModel: unknown = codexFastModel()) {
 	const handlers = new Map<string, Handler>();
 	const labels: Array<string | undefined> = [];
+	const notices: string[] = [];
 	const completed: Array<{ model: unknown; options: unknown }> = [];
 	const codexStreams: Array<{ model: unknown; options: unknown }> = [];
 	const pi = {
@@ -275,6 +307,7 @@ function setupSession(api: string, fastModel: unknown = codexFastModel()) {
 			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k", headers: {} }),
 		},
 		ui: {
+			notify: (message: string) => notices.push(message),
 			setHiddenThinkingLabel: (label?: string) => labels.push(label),
 		},
 	} as unknown as ExtensionContext;
@@ -318,7 +351,16 @@ function setupSession(api: string, fastModel: unknown = codexFastModel()) {
 			},
 			ctx,
 		);
-	return { codexStreams, completed, ctx, fire, handlers, labels, partial };
+	return {
+		codexStreams,
+		completed,
+		ctx,
+		fire,
+		handlers,
+		labels,
+		notices,
+		partial,
+	};
 }
 
 const settle = async () => {
@@ -391,9 +433,9 @@ describe("thinking summary session", () => {
 		expect("reasoning" in options).toBe(false);
 	});
 
-	test("skips providers that already return reasoning summaries", async () => {
+	test("labels provider-authored summaries without a model call", async () => {
 		fastProfileEnv();
-		const { codexStreams, completed, ctx, fire, handlers } =
+		const { codexStreams, completed, ctx, fire, handlers, partial } =
 			setupSession("openai-responses");
 		await handlers.get("session_start")?.({}, ctx);
 
@@ -402,26 +444,126 @@ describe("thinking summary session", () => {
 
 		expect(completed).toEqual([]);
 		expect(codexStreams).toEqual([]);
+
+		// The provider's own summary text becomes the label.
+		const label = new FakeText(THINKING_LABEL);
+		const component = new FakeComponent(
+			[thinking(LONG_THINKING)],
+			[new FakeRegion(label)],
+		);
+		component.lastMessage.timestamp = partial.timestamp;
+		applyThinkingSummaries(component);
+		expect(label.text.startsWith("thinking · Analysing the loader path")).toBe(
+			true,
+		);
 	});
 
-	test("skips fast models whose reasoning cannot be switched off", async () => {
+	test("uses the lowest level for models that cannot be silenced", async () => {
 		fastProfileEnv("google/gemini-flash");
-		const { codexStreams, completed, ctx, fire, handlers } = setupSession(
-			"anthropic-messages",
-			{
+		const { codexStreams, completed, ctx, fire, handlers, notices } =
+			setupSession("anthropic-messages", {
 				provider: "google",
 				id: "gemini-flash",
 				api: "google-generative-ai",
 				reasoning: true,
-			},
-		);
+				thinkingLevelMap: {
+					off: null,
+					minimal: null,
+					low: "low",
+					medium: null,
+					high: "high",
+					xhigh: null,
+					max: "max",
+				},
+			});
 		await handlers.get("session_start")?.({}, ctx);
 
 		fire(LONG_THINKING);
 		await settle();
 
-		expect(completed).toEqual([]);
 		expect(codexStreams).toEqual([]);
+		expect(completed).toHaveLength(1);
+		expect(completed[0]?.options).toMatchObject({ reasoning: "low" });
+		expect(notices[0]).toContain(
+			"google/gemini-flash cannot disable reasoning; using low",
+		);
+	});
+
+	test("inherits the session model when the fast entry pins no model", async () => {
+		// Mirrors the go-deepseek profile: `fast` only sets a thinking level, and
+		// the inherited model cannot turn reasoning off.
+		process.env.PI_SUITE_PROFILE_AGENTS = JSON.stringify({
+			"go-deepseek": {
+				session: { model: "opencode-go/deepseek-v4.1-flash", thinking: "high" },
+				fast: { thinking: "off" },
+			},
+		});
+		const session = {
+			provider: "opencode-go",
+			id: "deepseek-v4.1-flash",
+			api: "openai-completions",
+			reasoning: true,
+			thinkingLevelMap: {
+				off: null,
+				minimal: null,
+				low: "low",
+				medium: null,
+				high: "high",
+				xhigh: null,
+				max: "max",
+			},
+			compat: { thinkingFormat: "deepseek" },
+		};
+		const { codexStreams, completed, ctx, fire, handlers, notices } =
+			setupSession("openai-completions", session);
+		(ctx as unknown as { model: unknown }).model = session;
+		await handlers.get("session_start")?.({}, ctx);
+
+		fire(LONG_THINKING);
+		await settle();
+
+		expect(codexStreams).toEqual([]);
+		expect(completed).toHaveLength(1);
+		expect((completed[0]?.model as { id: string } | undefined)?.id).toBe(
+			"deepseek-v4.1-flash",
+		);
+		expect(completed[0]?.options).toMatchObject({
+			reasoning: "low",
+			cacheRetention: "none",
+			maxTokens: 80,
+		});
+		expect(notices).toEqual([
+			"Thinking summaries: opencode-go/deepseek-v4.1-flash cannot disable reasoning; using low",
+		]);
+	});
+
+	test("summarizes with an inherited session model that is silenceable", async () => {
+		process.env.PI_SUITE_PROFILE_AGENTS = JSON.stringify({
+			local: {
+				session: { model: "anthropic/claude-haiku" },
+				fast: { thinking: "off" },
+			},
+		});
+		const session = {
+			provider: "anthropic",
+			id: "claude-haiku",
+			api: "anthropic-messages",
+			reasoning: true,
+		};
+		const { completed, ctx, fire, handlers } = setupSession(
+			"anthropic-messages",
+			session,
+		);
+		(ctx as unknown as { model: unknown }).model = session;
+		await handlers.get("session_start")?.({}, ctx);
+
+		fire(LONG_THINKING);
+		await settle();
+
+		expect(completed).toHaveLength(1);
+		expect((completed[0]?.model as { id: string } | undefined)?.id).toBe(
+			"claude-haiku",
+		);
 	});
 
 	test("ignores blocks too short to summarize", async () => {
@@ -531,5 +673,82 @@ describe("canSilenceThinking", () => {
 		for (const api of ["google-generative-ai", "pi-messages"]) {
 			expect(canSilenceThinking(model({ api }))).toBe(false);
 		}
+	});
+});
+
+describe("summaryReasoning", () => {
+	const model = (over: Record<string, unknown>) =>
+		({
+			api: "openai-completions",
+			provider: "opencode-go",
+			reasoning: true,
+			...over,
+		}) as never;
+
+	test("leaves silenceable models without a level", () => {
+		expect(
+			summaryReasoning(model({ api: "anthropic-messages" })),
+		).toBeUndefined();
+		expect(
+			summaryReasoning(model({ api: "openai-codex-responses" })),
+		).toBeUndefined();
+		// No explicit `off: null`, so pi treats the level as available.
+		expect(
+			summaryReasoning(model({ thinkingLevelMap: undefined })),
+		).toBeUndefined();
+	});
+
+	test("picks the weakest supported level when off is unavailable", () => {
+		// deepseek-v4.1-flash / glm-5.3-flash shape.
+		expect(
+			summaryReasoning(
+				model({
+					thinkingLevelMap: {
+						off: null,
+						minimal: null,
+						low: "low",
+						medium: null,
+						high: "high",
+						xhigh: null,
+						max: "max",
+					},
+				}),
+			),
+		).toBe("low");
+		// Only high/max exposed (deepseek-v4-pro shape).
+		expect(
+			summaryReasoning(
+				model({
+					thinkingLevelMap: {
+						off: null,
+						minimal: null,
+						low: null,
+						medium: null,
+						high: "high",
+						max: "max",
+					},
+				}),
+			),
+		).toBe("high");
+	});
+
+	test("treats a level missing from the map as supported", () => {
+		// Mirrors pi's getSupportedThinkingLevels: only `null` marks a level out.
+		expect(
+			lowestThinkingLevel(model({ thinkingLevelMap: undefined }) as never),
+		).toBe("minimal");
+		expect(
+			lowestThinkingLevel(
+				model({ thinkingLevelMap: { minimal: null, low: "low" } }) as never,
+			),
+		).toBe("low");
+	});
+
+	test("has nothing to request for non-reasoning models", () => {
+		expect(
+			summaryReasoning(
+				model({ reasoning: false, thinkingLevelMap: undefined }),
+			),
+		).toBeUndefined();
 	});
 });
