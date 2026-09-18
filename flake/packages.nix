@@ -54,7 +54,7 @@ _: {
         ];
       };
 
-      npmDepsHash = "sha256-xbQEW+/4oVGZGDUwJK8tUzotx7d9XQeujD/4ae6TB/E=";
+      npmDepsHash = "sha256-TIzGkWkkqAh/C5gdsR8CU/5yWeg7rclyQMcAsTBLEdM=";
       makeCacheWritable = true;
       npmInstallFlags = [
         "--legacy-peer-deps"

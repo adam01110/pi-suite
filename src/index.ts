@@ -31,6 +31,7 @@ const BLOCKED_COMMANDS = {
   header: new Set(["hc", "hcl", "hdf", "hi", "hm", "hps", "hs", "hsp", "htg", "hv"]),
   mcp: new Set(["mcp-auth", "pi-mcp"]),
   qol: new Set([
+    "context",
     "qol",
     "qol:rename",
     "qol:rename:full",
@@ -63,6 +64,13 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
       ),
       optional: true,
     },
+    {
+      id: "context-viewer",
+      // Replaces the QOL /context command, which is suppressed above.
+      factory: upstreamFactory("@agnishc/edb-context-viewer/src/index.ts"),
+      optional: true,
+    },
+
     {
       id: "header-refresh",
       factory: headerRefresh,

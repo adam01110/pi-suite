@@ -6,6 +6,7 @@
       "name": "@adam0/pi-suite",
       "dependencies": {
         "@agent-sh/computer-use-linux": "0.5.0",
+        "@agnishc/edb-context-viewer": "0.21.1",
         "@ff-labs/pi-fff": "0.10.6",
         "@gotgenes/pi-autoformat": "5.1.9",
         "@harms-haus/pi-cwd": "1.0.0",
@@ -51,6 +52,8 @@
   },
   "packages": {
     "@agent-sh/computer-use-linux": ["@agent-sh/computer-use-linux@0.5.0", "", { "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "typebox"], "os": "linux", "cpu": [ "x64", "arm64", ], "bin": { "computer-use-linux": "npm/bin/computer-use-linux.js" } }, "sha512-jAKA3BuAoozy5zGUfaD8Zx4TyDiB0RV4gp17vjyYgZIRehS+woEyFUxPhmt1oqEngXvlUs8ZlhgMEzmb92+0Aw=="],
+
+    "@agnishc/edb-context-viewer": ["@agnishc/edb-context-viewer@0.21.1", "", { "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*" } }, "sha512-KrbGSaIetv00Bhdhh6uwaYy13JX6w3FyGqgAj7nAl1UU+yYqYzYyLQbXKlxRJqsnuKr86DPpHHjqDQPq4gAcfA=="],
 
     "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.123.0", "", { "dependencies": { "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-Y9oX9mPNGZClHQOFqrWRk43Srcu/UHuPq3rfxxOq7JgW0gi+lJA2MAOK4Ul3k/+AUrwRWFJvd0tK3oC0Pw25dw=="],
 
