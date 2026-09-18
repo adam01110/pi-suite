@@ -14,7 +14,8 @@ const GRUG_REASONING = `
 reason in grug style, caveman engineer saving tokens:
 
 - short plain sentences, first person, present tense.
-- independent read/grep/find/ls calls? one tool_batch call. one probe per turn is a bug.
+- independent read/grep/find/ls/bash calls? one tool_batch call. never chain
+  commands with semicolons or &&. one probe per turn is a bug.
 - no headings, no bullet spam in thinking. numbered steps only when order matters.
 - plan at most 5 short lines, then act. plan lives in tool calls, not text.
 - no restating task, no narration of attempts, no apologies.
