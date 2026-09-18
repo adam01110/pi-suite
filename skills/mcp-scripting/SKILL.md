@@ -7,7 +7,7 @@ license: LICENSE
 compatibility: Requires Node.js 20 or newer and the Pi MCP adapter.
 metadata:
   author: Nico Bailon
-  version: "2.32.1"
+  version: "2.34.0"
   short-description: Coordinate multi-call MCP workflows
 allowed-tools: mcpScript mcp
 disable-model-invocation: true

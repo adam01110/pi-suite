@@ -31,29 +31,19 @@ function createTui(rows: number): TUI & { mode: "regular" } {
 		component([]),
 		component(["footer"]),
 	];
-	// Real TUIs recompute layout heights every frame, so the getter returns a
-	// fresh layout: mutations by the anchor must not leak across frames.
-	const heights = [1, 0, 0, 0, 1, 0, 1];
-	let currentWidth = 0;
-	Object.defineProperty(root, "mouseLayout", {
-		get: () => {
-			if (root.children.length !== 7) return undefined;
-			return {
-				width: currentWidth,
-				children: heights.map((height) => ({ height })),
-			};
-		},
-	});
+	// Container.render assigns mouseLayout itself and rebuilds the child heights
+	// on every frame, so heights mutated by the anchor cannot leak across frames.
 	Object.assign(root, {
 		mode: "regular",
 		terminal: { columns: 80, rows },
 	});
-	const originalRender = root.render.bind(root);
-	root.render = (width: number) => {
-		currentWidth = width;
-		return originalRender(width);
-	};
 	return root as unknown as TUI & { mode: "regular" };
+}
+
+type MouseLayout = { width: number; children: Array<{ height: number }> };
+
+function layoutOf(tui: TUI): MouseLayout | undefined {
+	return (tui as unknown as { mouseLayout?: MouseLayout }).mouseLayout;
 }
 
 describe("regular bottom anchor", () => {
@@ -69,6 +59,12 @@ describe("regular bottom anchor", () => {
 		widgetsAbove.addChild(anchor);
 
 		expect(tui.render(80)).toEqual(["message", "", "", "editor", "footer"]);
+		// Spacer rows are credited to the widget area above the editor so mouse
+		// hit-testing still maps rows to the components drawn there.
+		expect(layoutOf(tui)?.children[3].height).toBe(2);
+		// Heights are recomputed per frame: a second frame must not accumulate.
+		expect(tui.render(80)).toEqual(["message", "", "", "editor", "footer"]);
+		expect(layoutOf(tui)?.children[3].height).toBe(2);
 	});
 
 	test("renders each stateful component once per frame", () => {
@@ -111,5 +107,6 @@ describe("regular bottom anchor", () => {
 		tui.children.pop();
 
 		expect(tui.render(80)).toEqual(["message", "editor"]);
+		expect(layoutOf(tui)?.children[3].height).toBe(0);
 	});
 });
