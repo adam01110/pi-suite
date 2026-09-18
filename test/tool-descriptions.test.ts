@@ -57,16 +57,22 @@ test("description trims rewrite registered tools at before_agent_start", () => {
 	installDescriptionTrims(pi as ExtensionAPI, tools);
 	pi.handler();
 
-	const workflow = [...registered].reverse().find((tool) => tool.name === "SubagentWorkflow");
+	const workflow = [...registered]
+		.reverse()
+		.find((tool) => tool.name === "SubagentWorkflow");
 	expect(workflow?.description).toMatch(/subagent-workflows skill/);
 	expect(workflow?.execute).toBe(upstream.execute);
 
-	const proxyTrim = [...registered].reverse().find((tool) => tool.name === "mcp__context7");
+	const proxyTrim = [...registered]
+		.reverse()
+		.find((tool) => tool.name === "mcp__context7");
 	expect(proxyTrim?.description).toBe(
 		'Namespace proxy for MCP server "context7". Forwards {tool, args} to it.',
 	);
 
-	expect([...registered].reverse().find((tool) => tool.name === "some-tool")).toBe(untouched);
+	expect(
+		[...registered].reverse().find((tool) => tool.name === "some-tool"),
+	).toBe(untouched);
 });
 
 test("description trims run once and slim ask_user schema properties", () => {
@@ -107,14 +113,15 @@ test("description trims run once and slim ask_user schema properties", () => {
 	pi.handler();
 	expect(registered.length).toBe(countAfterFirst);
 
-	const slimmed = [...registered].reverse().find((tool) => tool.name === "ask_user");
+	const slimmed = [...registered]
+		.reverse()
+		.find((tool) => tool.name === "ask_user");
 	if (!slimmed) throw new Error("ask_user was not re-registered");
-	const properties = (slimmed.parameters as {
-		properties: Record<
-			string,
-			{ description?: string; enum?: string[] }
-		>;
-	}).properties;
+	const properties = (
+		slimmed.parameters as {
+			properties: Record<string, { description?: string; enum?: string[] }>;
+		}
+	).properties;
 	expect(properties.question.description).toBe("The question to ask");
 	expect(properties.displayMode.enum).toEqual(["overlay", "inline"]);
 	expect(properties.displayMode.description).toBeUndefined();
