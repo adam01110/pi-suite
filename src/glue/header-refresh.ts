@@ -18,11 +18,12 @@ let customHeader: HeaderComponent | undefined;
 
 /**
  * pi-cc-header caches its info rows (model line included) keyed by width only
- * and never listens to model_select, so the profile switcher leaves the header
- * showing the previous model. This glue must load before the header module so
+ * and never listens to model_select or thinking_level_select, so the profile
+ * switcher and the thinking-level keybinding leave the header showing the
+ * previous model and effort. This glue must load before the header module so
  * its session_start wraps setHeader first; the wrapper tracks the mounted
  * header component and reapplies it (clear cache + requestRender, no remount)
- * whenever the model changes.
+ * whenever either changes.
  */
 export default function headerRefresh(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
@@ -45,7 +46,10 @@ export default function headerRefresh(pi: ExtensionAPI): void {
 		};
 	});
 
-	pi.on("model_select", () => {
+	const refresh = () => {
 		customHeader?.reapply?.();
-	});
+	};
+
+	pi.on("model_select", refresh);
+	pi.on("thinking_level_select", refresh);
 }

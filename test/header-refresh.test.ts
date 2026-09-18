@@ -64,6 +64,24 @@ describe("header refresh", () => {
 		expect((headers[0]?.reapplies as number) ?? 0).toBe(1);
 	});
 
+	test("reapplies the mounted header after a thinking level change", async () => {
+		const { pi, fire } = makeHarness();
+		const { ui, headers } = makeUi();
+		headerRefresh(pi);
+
+		await fire("session_start", { reason: "startup" }, ctxOf(ui));
+		const header = fakeHeader();
+		ui.setHeader(() => header as never);
+
+		await fire(
+			"thinking_level_select",
+			{ type: "thinking_level_select", level: "high", previousLevel: "low" },
+			ctxOf(ui),
+		);
+		expect(header.reapplies).toBe(1);
+		expect((headers[0]?.reapplies as number) ?? 0).toBe(1);
+	});
+
 	test("keeps the header mounted without restarting it", async () => {
 		const { pi, fire } = makeHarness();
 		const { ui, headers } = makeUi();
