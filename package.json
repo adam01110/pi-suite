@@ -20,7 +20,6 @@
 		"@tintinweb/pi-subagents": "0.19.0",
 		"@vanillagreen/pi-qol": "2.0.1",
 		"@vanillagreen/pi-tool-renderer": "2.0.1",
-		"@xbear/pi-goal": "0.12.1",
 		"cc-safety-net": "2.3.4",
 		"pi-ask-user": "0.15.0",
 		"pi-atuin": "0.1.13",

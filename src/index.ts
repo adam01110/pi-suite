@@ -132,11 +132,6 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 		},
 
 		{
-			id: "goal",
-			factory: upstreamFactory("@xbear/pi-goal/src/goal.ts"),
-			optional: true,
-		},
-		{
 			id: "btw",
 			factory: upstreamFactory("pi-btw/extensions/btw.js"),
 			optional: true,
