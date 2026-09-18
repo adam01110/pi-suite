@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +9,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 /**
- * Model-profile side effects for the premade startup picker and /model:
+ * Model-profile side effects for the startup picker and /model:
  *
  * - The web-access summarizer follows the session model by rewriting
  *   summaryModel in web-search.json on every explicit model change.
@@ -93,6 +93,37 @@ function statePath(dir: string): string {
 	// Colocated with the agent files: scoping the state to one agent dir keeps
 	// test sandboxes isolated and survives directory moves.
 	return join(dir, "pi-suite-profile-state.json");
+}
+
+function lastProfilePath(dir: string): string {
+	return join(dir, "pi-suite-last-profile.json");
+}
+
+/** Profile key picked in an earlier session; the list marks it. */
+function readLastProfile(dir: string): string | undefined {
+	const path = lastProfilePath(dir);
+	if (!existsSync(path)) return undefined;
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8")) as {
+			profile?: unknown;
+		};
+		return typeof parsed.profile === "string" ? parsed.profile : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+async function writeLastProfile(dir: string, profile: string): Promise<void> {
+	try {
+		mkdirSync(dir, { recursive: true });
+		await writeFile(
+			lastProfilePath(dir),
+			`${JSON.stringify({ profile }, null, 2)}\n`,
+			"utf8",
+		);
+	} catch {
+		// Recording the pick is best-effort.
+	}
 }
 
 /**
@@ -397,20 +428,25 @@ async function promptThinking(
 }
 
 /**
- * Startup profile selection. Lists the configured profiles from
- * PI_SUITE_PROFILE_AGENTS; picking one sets the session model from
- * `session.model` when present (side effects then run through
+ * Profile selection, shown on startup and on `/new`. Lists the configured
+ * profiles from PI_SUITE_PROFILE_AGENTS; picking one sets the session model
+ * from `session.model` when present (side effects then run through
  * model_select) or keeps the current default (profiles without a session
  * model). Cancel keeps the default untouched.
+ *
+ * Every session boots on pi's default model, which is normally the codex
+ * profile, so the list cannot mark the profile in effect. It marks the last
+ * pick recorded in the agent dir instead.
  */
-async function pickStartupProfile(
+async function pickProfile(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 ): Promise<void> {
 	const config = loadProfileConfig();
 	if (!config || Object.keys(config).length === 0) return;
 
-	const current = ctx.model;
+	const dir = agentDirPath();
+	const lastPicked = readLastProfile(dir);
 	const entries: Array<{ key: string; model?: Model<any> }> = [];
 	for (const key of Object.keys(config)) {
 		const ref = config[key].session?.model;
@@ -429,19 +465,16 @@ async function pickStartupProfile(
 	}
 	if (entries.length === 0) return;
 
-	const options = entries.map((entry) => {
-		const active =
-			entry.model &&
-			current &&
-			current.provider === entry.model.provider &&
-			current.id === entry.model.id;
-		return `${entry.key}${active ? "  (active)" : ""}`;
-	});
+	const options = entries.map((entry) =>
+		entry.key === lastPicked ? `${entry.key}  (last used)` : entry.key,
+	);
 	const choice = await ctx.ui.select("Model profile:", options);
 	if (!choice) return;
 
 	const picked = entries[options.indexOf(choice)];
 	if (!picked) return;
+
+	await writeLastProfile(dir, picked.key);
 
 	if (picked.model) {
 		const changed = await pi.setModel(picked.model);
@@ -467,15 +500,18 @@ async function pickStartupProfile(
 	}
 }
 
-function registerStartupProfileSelect(pi: ExtensionAPI): void {
+/** `/new` rebuilds the session from pi's default model, so it asks again. */
+const PICK_REASONS: ReadonlySet<string> = new Set(["startup", "new"]);
+
+function registerProfileSelect(pi: ExtensionAPI): void {
 	pi.on("session_start", async (event, ctx) => {
-		if (event.reason !== "startup" || !ctx.hasUI) return;
-		await pickStartupProfile(pi, ctx);
+		if (!PICK_REASONS.has(event.reason) || !ctx.hasUI) return;
+		await pickProfile(pi, ctx);
 	});
 }
 
 export default function modelProfile(pi: ExtensionAPI): void {
-	registerStartupProfileSelect(pi);
+	registerProfileSelect(pi);
 
 	pi.on("model_select", async (event, ctx) => {
 		// Restores replay the session's own model/level choices.

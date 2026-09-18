@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -82,6 +85,39 @@ function withConfig(
 		if (saved === undefined) delete process.env.PI_SUITE_PROFILE_AGENTS;
 		else process.env.PI_SUITE_PROFILE_AGENTS = saved;
 	});
+}
+
+/** The picker stores its state beside the agent files it also rewrites. */
+function lastProfileFile(agentDir: string): string {
+	return join(agentDir, "agents", "pi-suite-last-profile.json");
+}
+
+function makeAgentDir(): string {
+	return join(
+		tmpdir(),
+		`pi-suite-startup-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+	);
+}
+
+// The picker records its last pick in the agent dir, so every test needs its
+// own: one run must never touch the real ~/.pi/agent.
+let agentDir: string;
+
+beforeEach(() => {
+	agentDir = makeAgentDir();
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+});
+
+afterEach(() => {
+	delete process.env.PI_CODING_AGENT_DIR;
+	rmSync(agentDir, { recursive: true, force: true });
+});
+
+function setSelect(
+	ctx: ExtensionContext,
+	select: (title: string, options: string[]) => Promise<string | undefined>,
+): void {
+	(ctx.ui as { select: typeof select }).select = select;
 }
 
 describe("startup profile select", () => {
@@ -174,6 +210,55 @@ describe("startup profile select", () => {
 			for (const handler of handlers.get("session_start") ?? [])
 				await handler({ reason: "startup" }, headless);
 			expect(setModelCalls).toEqual([]);
+		});
+	});
+
+	test("asks again on /new", async () => {
+		await withConfig(JSON.stringify(CONFIG), async () => {
+			const { handlers, setModelCalls, ctx } = makeHarness();
+			setSelect(ctx, async (_title, options) => options[1]);
+
+			for (const handler of handlers.get("session_start") ?? [])
+				await handler({ reason: "new" }, ctx);
+
+			expect(setModelCalls).toMatchObject([
+				{ provider: "opencode-go", id: "glm-5.3-flash" },
+			]);
+		});
+	});
+
+	test("marks the profile picked last time", async () => {
+		await withConfig(JSON.stringify(CONFIG), async () => {
+			mkdirSync(join(agentDir, "agents"), { recursive: true });
+			writeFileSync(
+				lastProfileFile(agentDir),
+				JSON.stringify({ profile: "go-glm" }),
+			);
+			const { handlers, ctx } = makeHarness();
+			let seen: string[] = [];
+			setSelect(ctx, async (_title, options) => {
+				seen = options;
+				return undefined;
+			});
+
+			for (const handler of handlers.get("session_start") ?? [])
+				await handler({ reason: "startup" }, ctx);
+
+			expect(seen).toEqual(["codex", "go-glm  (last used)"]);
+		});
+	});
+
+	test("records the pick for the next session", async () => {
+		await withConfig(JSON.stringify(CONFIG), async () => {
+			const { handlers, ctx } = makeHarness();
+			setSelect(ctx, async (_title, options) => options[1]);
+
+			for (const handler of handlers.get("session_start") ?? [])
+				await handler({ reason: "startup" }, ctx);
+
+			expect(
+				JSON.parse(readFileSync(lastProfileFile(agentDir), "utf8")),
+			).toEqual({ profile: "go-glm" });
 		});
 	});
 });

@@ -126,6 +126,14 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
       optional: true,
     },
     {
+      id: "model-profile",
+      // Registered ahead of fff: the runner awaits session_start handlers in
+      // load order, and fff scans the working directory there, which in large
+      // trees delays the profile modal until that scan settles.
+      factory: modelProfile,
+      optional: true,
+    },
+    {
       id: "fff",
       factory: suppressNotifications(
         suppressCommands(upstreamFactory("@ff-labs/pi-fff/src/index.js"), BLOCKED_COMMANDS.fff),
@@ -162,12 +170,6 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
     {
       id: "rewind",
       factory: rewind,
-      optional: true,
-    },
-    {
-      id: "model-profile",
-      // Startup profile selection and the profile side effects.
-      factory: modelProfile,
       optional: true,
     },
     { id: "tps-counter", factory: tpsCounter, optional: true },
