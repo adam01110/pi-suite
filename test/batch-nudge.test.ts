@@ -104,7 +104,108 @@ describe("batch nudge", () => {
 		h.entry("user");
 		const args = { command: "ls src && grep -rn nudge src" };
 		h.entry("assistant", solo("bash", "b1", args));
+		const result = h.block({ id: "b1", name: "bash", args });
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toContain("tool_batch(");
+		expect(result?.reason).toContain('"command":"ls src"');
+	});
+
+	test("blocks a chained bash command on re-issue instead of letting it run", () => {
+		const h = setup();
+		h.entry("user");
+		const args = { command: "ls && pwd" };
+		h.entry("assistant", solo("bash", "b1", args));
 		expect(h.block({ id: "b1", name: "bash", args })?.block).toBe(true);
+		h.entry("assistant", solo("bash", "b2", args));
+		expect(h.block({ id: "b2", name: "bash", args })?.block).toBe(true);
+	});
+
+	test("lets the same chained command through after the block cap", () => {
+		const h = setup();
+		h.entry("user");
+		const args = { command: "ls && pwd" };
+		h.entry("assistant", solo("bash", "b1", args));
+		expect(h.block({ id: "b1", name: "bash", args })?.block).toBe(true);
+		h.entry("assistant", solo("bash", "b2", args));
+		expect(h.block({ id: "b2", name: "bash", args })?.block).toBe(true);
+		h.entry("assistant", solo("bash", "b3", args));
+		expect(h.block({ id: "b3", name: "bash", args })).toBeUndefined();
+	});
+
+	test("counts chained blocks per run, not across a user turn", () => {
+		const h = setup();
+		h.entry("user");
+		const args = { command: "ls && pwd" };
+		h.entry("assistant", solo("bash", "b1", args));
+		expect(h.block({ id: "b1", name: "bash", args })?.block).toBe(true);
+		h.entry("user");
+		h.entry("assistant", solo("bash", "b2", args));
+		expect(h.block({ id: "b2", name: "bash", args })?.block).toBe(true);
+	});
+
+	test("blocks a newline-separated bash command", () => {
+		const h = setup();
+		h.entry("user");
+		const args = { command: "ls\npwd" };
+		h.entry("assistant", solo("bash", "b1", args));
+		expect(h.block({ id: "b1", name: "bash", args })?.block).toBe(true);
+	});
+
+	test("allows a trailing newline", () => {
+		const h = setup();
+		h.entry("user");
+		const args = { command: "rg -n nudge src\n" };
+		h.entry("assistant", solo("bash", "b1", args));
+		expect(h.block({ id: "b1", name: "bash", args })).toBeUndefined();
+	});
+
+	test("allows a backslash line continuation", () => {
+		const h = setup();
+		h.entry("user");
+		const args = { command: "rg -n nudge \\\n  src" };
+		h.entry("assistant", solo("bash", "b1", args));
+		expect(h.block({ id: "b1", name: "bash", args })).toBeUndefined();
+	});
+
+	test("blocks chained bash nested in a tool_batch entry", () => {
+		const h = setup();
+		h.entry("user");
+		const args = {
+			calls: [
+				{ tool: "bash", args: { command: "ls && pwd" } },
+				{ tool: "read", args: { path: "a" } },
+			],
+		};
+		h.entry("assistant", solo("tool_batch", "tb1", args));
+		const result = h.block({ id: "tb1", name: "tool_batch", args });
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toContain('"command":"ls"');
+	});
+
+	test("blocks flat and aliased tool_batch entries with chains", () => {
+		const h = setup();
+		h.entry("user");
+		const args = {
+			calls: [
+				{ name: "bash", command: "ls; pwd" },
+				{ tool: "bash", arguments: { command: "pwd || ls" } },
+			],
+		};
+		h.entry("assistant", solo("tool_batch", "tb1", args));
+		expect(h.block({ id: "tb1", name: "tool_batch", args })?.block).toBe(true);
+	});
+
+	test("allows a tool_batch whose bash entries are single commands", () => {
+		const h = setup();
+		h.entry("user");
+		const args = {
+			calls: [
+				{ tool: "bash", args: { command: "ls" } },
+				{ tool: "bash", args: { command: "pwd" } },
+			],
+		};
+		h.entry("assistant", solo("tool_batch", "tb1", args));
+		expect(h.block({ id: "tb1", name: "tool_batch", args })).toBeUndefined();
 	});
 
 	test("allows a single bash command with no chain", () => {
