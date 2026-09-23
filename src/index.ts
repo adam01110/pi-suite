@@ -9,7 +9,6 @@ import headerRefresh from "./glue/header-refresh.js";
 import modelProfile from "./glue/model-profile.js";
 import regularBottomAnchor from "./glue/regular-bottom-anchor.js";
 import rewind from "./glue/rewind.js";
-import thinkingLabel from "./glue/thinking-label.js";
 import toolRenderer from "./glue/tool-renderer.js";
 import tpsCounter from "./glue/tps-counter.js";
 import webAccess from "./glue/web-access.js";
@@ -200,8 +199,6 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 		{ id: "grug-reasoning", factory: grugReasoning, optional: true },
 		// Pure event work, no UI. Blocks serial same-tool lookups weak models emit.
 		{ id: "batch-nudge", factory: batchNudge, optional: true },
-		// Runs after QOL: it replaces QOL's glyph thinking label on session_start.
-		{ id: "thinking-label", factory: thinkingLabel, optional: true },
 		{ id: "working-indicator", factory: workingIndicator, optional: true },
 		{
 			id: "subagents",
