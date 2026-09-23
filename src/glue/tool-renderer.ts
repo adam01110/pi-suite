@@ -173,6 +173,29 @@ const SAFE_USER_MESSAGE_RENDERER = Symbol(
 	"pi-suite-safe-user-message-renderer",
 );
 
+const USER_MESSAGE_RENDER_CACHE = Symbol("pi-suite-user-message-render-cache");
+
+/**
+ * Settings generation from the vendored renderer. The TUI repaints the whole
+ * transcript every frame, so a rendered frame is only reusable while the
+ * settings it was built from still hold. Falls back to 0 when the installed
+ * renderer predates the export.
+ */
+let currentSettingsGeneration: () => number = () => 0;
+
+export function setSettingsGenerationSource(source: () => number): void {
+	currentSettingsGeneration = source;
+}
+
+interface UserMessageRenderCacheEntry {
+	cwd: string | undefined;
+	generation: number;
+	lines: string[];
+	text: string | undefined;
+	theme: unknown;
+	width: number;
+}
+
 type UserMessageRendererModule = {
 	renderRawUserMessageLines(
 		component: unknown,
@@ -209,18 +232,47 @@ export function installSessionSafeUserMessageRenderer(
 		state = {
 			fallback: prototype.render,
 			render(width: number) {
+				const component = this as unknown as Record<PropertyKey, any>;
 				const ctx = state?.activeCtx;
 				if (!ctx?.hasUI || ctx.mode !== "tui")
 					return state!.fallback.call(this, width);
 				const theme = ctx.ui.theme;
+				const text =
+					typeof component.text === "string" ? component.text : undefined;
+				const generation = currentSettingsGeneration();
+				const cached = component[USER_MESSAGE_RENDER_CACHE] as
+					| UserMessageRenderCacheEntry
+					| undefined;
+				if (
+					cached &&
+					cached.width === width &&
+					cached.text === text &&
+					cached.theme === theme &&
+					cached.cwd === ctx.cwd &&
+					cached.generation === generation
+				)
+					return cached.lines;
+
 				const lines = renderer.renderRawUserMessageLines(
 					this,
 					Math.max(1, width - 2),
 					theme,
 				);
-				return lines
+				const result = lines
 					? renderer.renderUserMessageBorder(lines, width, theme, ctx.cwd, true)
 					: state!.fallback.call(this, width);
+				if (text !== undefined)
+					component[USER_MESSAGE_RENDER_CACHE] = {
+						cwd: ctx.cwd,
+						// Read after the render so a settings re-read triggered by this
+						// frame cannot invalidate the entry it just stored.
+						generation: currentSettingsGeneration(),
+						lines: result,
+						text,
+						theme,
+						width,
+					} satisfies UserMessageRenderCacheEntry;
+				return result;
 			},
 		};
 		prototype[SAFE_USER_MESSAGE_RENDERER] = state;
@@ -280,6 +332,11 @@ export default async function toolRendererAdapter(
 	const messageRenderer = await importUpstream(
 		"@vanillagreen/pi-tool-renderer/extensions/tool-renderer/messages.js",
 	);
+	const rendererSettings = await importUpstream(
+		"@vanillagreen/pi-tool-renderer/extensions/tool-renderer/settings.js",
+	);
+	if (typeof rendererSettings.currentSettingsGeneration === "function")
+		setSettingsGenerationSource(rendererSettings.currentSettingsGeneration);
 	installSessionSafeUserMessageRenderer(
 		pi,
 		agent.UserMessageComponent,

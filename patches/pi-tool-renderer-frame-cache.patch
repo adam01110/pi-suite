@@ -1,0 +1,168 @@
+Patch @vanillagreen/pi-tool-renderer so a TUI frame neither re-reads settings
+files nor re-wraps unchanged tool chrome.
+
+Pi re-renders the entire transcript on every frame, and this renderer runs its
+chrome and user-message paths per message per frame. Two hot spots made
+keystroke latency grow with transcript length: readPackageConfig parsed every
+settings file on each call, and renderToolChromeLines re-wrapped every line of
+every tool block on every render.
+
+Applied by flake/packages.nix after npm install. To apply it to a development
+checkout, run from the repository root:
+
+  patch -p1 -d node_modules/@vanillagreen/pi-tool-renderer < patches/pi-tool-renderer-frame-cache.patch
+
+Upstream: github.com/vanillagreencom/kendex
+
+--- a/extensions/tool-renderer/settings.ts
++++ b/extensions/tool-renderer/settings.ts
+@@ -1,4 +1,4 @@
+-import { existsSync, readFileSync } from "node:fs";
++import { existsSync, readFileSync, statSync } from "node:fs";
+ import { homedir } from "node:os";
+ import { dirname, join, resolve } from "node:path";
+ 
+@@ -70,9 +70,48 @@
+ 	return projectSettingsTrusted(project) ? [user, project] : [user];
+ }
+ 
++/** How long a cached package config may skip its settings-file stat check. */
++const PACKAGE_CONFIG_TTL_MS = 250;
++
++interface PackageConfigCacheEntry {
++	expiresAt: number;
++	paths: string[];
++	stamp: string;
++	value: Record<string, unknown>;
++}
++
++const packageConfigCache = new Map<string, PackageConfigCacheEntry>();
++let settingsGeneration = 0;
++
++function settingsStamp(paths: readonly string[]): string {
++	let stamp = "";
++	for (const settingsPath of paths) {
++		try {
++			const info = statSync(settingsPath);
++			stamp += `${settingsPath}\u0000${info.mtimeMs}\u0000${info.size}\u0000`;
++		} catch {
++			stamp += `${settingsPath}\u0000missing\u0000`;
++		}
++	}
++	return stamp;
++}
++
+ export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
++	const cacheKey = `${packageId}\u0000${cwd ?? ""}`;
++	const cached = packageConfigCache.get(cacheKey);
++	if (cached && cached.expiresAt > Date.now()) return cached.value;
++
++	// Recomputing the paths picks up project trust changes and newly created
++	// settings files; the stamp then decides whether a re-read is needed.
++	const paths = piSettingsPaths(cwd);
++	const stamp = settingsStamp(paths);
++	if (cached && cached.stamp === stamp) {
++		cached.expiresAt = Date.now() + PACKAGE_CONFIG_TTL_MS;
++		return cached.value;
++	}
++
+ 	const merged: Record<string, unknown> = {};
+-	for (const settingsPath of piSettingsPaths(cwd)) {
++	for (const settingsPath of paths) {
+ 		if (!existsSync(settingsPath)) continue;
+ 		try {
+ 			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+@@ -82,6 +121,8 @@
+ 			// Ignore malformed optional manager config.
+ 		}
+ 	}
++	settingsGeneration += 1;
++	packageConfigCache.set(cacheKey, { expiresAt: Date.now() + PACKAGE_CONFIG_TTL_MS, paths, stamp, value: merged });
+ 	return merged;
+ }
+ 
+@@ -89,6 +130,11 @@
+ 	return readPackageConfig(CONFIG_ID, cwd) as kendexConfig;
+ }
+ 
++/** Bumped whenever a settings re-read happens, so render caches can drop stale frames. */
++export function currentSettingsGeneration(): number {
++	return settingsGeneration;
++}
++
+ export function settingNumber(key: string, fallback: number, cwd?: string): number {
+ 	const value = readkendexConfig(cwd)[key];
+ 	const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+--- a/extensions/tool-renderer/chrome.ts
++++ b/extensions/tool-renderer/chrome.ts
+@@ -21,7 +21,7 @@
+ 	shouldUseUnknownToolRenderer,
+ 	componentDefinesRenderer,
+ } from "./generic.js";
+-import { settingBoolean, settingEnum, toolChromeMode } from "./settings.js";
++import { currentSettingsGeneration, settingBoolean, settingEnum, toolChromeMode } from "./settings.js";
+ import { RESERVED_IMAGE_ROW_MARKER, TOOL_RENDER_OVERLAY_CHECK_SYMBOL } from "./overlay.js";
+ import { trackToolExecutionComponent } from "./live-settings.js";
+ import { glyphs } from "./glyphs.js";
+@@ -29,6 +29,31 @@
+ 
+ const TOOL_EXECUTION_RENDERER_PATCH_SYMBOL = Symbol.for("kendex.pi-tool-renderer.tool-execution-renderer-patch.v2");
+ const TOOL_CHROME_PATCH_SYMBOL = Symbol.for("kendex.pi-tool-renderer.tool-chrome-patch");
++const TOOL_CHROME_RENDER_CACHE_SYMBOL = Symbol.for("kendex.pi-tool-renderer.tool-chrome-render-cache");
++
++/** One entry per nesting level that renders chrome for the same component. */
++const TOOL_CHROME_RENDER_CACHE_LIMIT = 4;
++
++interface ToolChromeRenderCacheEntry {
++	generation: number;
++	result: string[];
++	source: string[];
++	width: number;
++}
++
++interface ToolChromeRenderCache {
++	entries: ToolChromeRenderCacheEntry[];
++}
++
++/** Frame-to-frame content comparison: string identity is cheap, wrapping is not. */
++function sameRenderedLines(source: readonly string[], next: readonly string[]): boolean {
++	if (source.length !== next.length) return false;
++	for (let index = 0; index < source.length; index++) {
++		if (source[index] !== next[index]) return false;
++	}
++	return true;
++}
++
+ const TOOL_CHROME_THEME_SYMBOL = Symbol.for("kendex.pi-tool-renderer.tool-chrome-theme");
+ const WORKING_LOADER_ALIGNMENT_PATCH_SYMBOL = Symbol.for("kendex.pi-tool-renderer.working-loader-alignment-patch");
+ 
+@@ -164,6 +189,29 @@
+ }
+ 
+ function renderToolChromeLines(component: any, rendered: string[], width: number): string[] {
++	const cache = component?.[TOOL_CHROME_RENDER_CACHE_SYMBOL] as ToolChromeRenderCache | undefined;
++	if (cache) {
++		const generation = currentSettingsGeneration();
++		for (const entry of cache.entries) {
++			if (entry.width === width && entry.generation === generation && sameRenderedLines(entry.source, rendered)) {
++				return entry.result;
++			}
++		}
++	}
++
++	const result = computeToolChromeLines(component, rendered, width);
++	if (component && typeof component === "object") {
++		const entries = cache?.entries ?? [];
++		// Reading the generation after the render keeps the entry valid when this
++		// render itself was the one that re-read the settings files.
++		entries.push({ generation: currentSettingsGeneration(), result, source: rendered.slice(), width });
++		while (entries.length > TOOL_CHROME_RENDER_CACHE_LIMIT) entries.shift();
++		if (!cache) component[TOOL_CHROME_RENDER_CACHE_SYMBOL] = { entries };
++	}
++	return result;
++}
++
++function computeToolChromeLines(component: any, rendered: string[], width: number): string[] {
+ 	const effectiveCwd = component?.cwd ?? process.cwd();
+ 	const mode = toolChromeMode(effectiveCwd);
+ 	if (mode === "off") return rendered;

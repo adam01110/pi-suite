@@ -7,6 +7,7 @@ _: {
       buildNpmPackage
       fetchurl
       lib
+      patch
       stdenv
       # keep-sorted end
       ;
@@ -63,6 +64,7 @@ _: {
           ../THIRD_PARTY_NOTICES.md
           ../package-lock.json
           ../package.json
+          ../patches
           ../skills
           ../src
         ];
@@ -88,6 +90,11 @@ _: {
 
       installPhase = ''
         runHook preInstall
+
+        # The vendored renderer repaints every message each frame; this drops the
+        # per-frame settings reads and chrome re-wrapping that made keystrokes
+        # scale with transcript length.
+        ${lib.getExe patch} --batch -p1 -d node_modules/@vanillagreen/pi-tool-renderer < ${../patches/pi-tool-renderer-frame-cache.patch}
 
         computerUseDir="node_modules/@agent-sh/computer-use-linux/npm/bin"
         install -Dm755 ${computerUseBinary} "$computerUseDir/computer-use-linux-linux-${computerUseTarget.nodeArch}"
