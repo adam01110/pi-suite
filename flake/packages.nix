@@ -96,6 +96,11 @@ _: {
         # scale with transcript length.
         ${lib.getExe patch} --batch -p1 -d node_modules/@vanillagreen/pi-tool-renderer < ${../patches/pi-tool-renderer-frame-cache.patch}
 
+        # A call whose turn was aborted before its result arrived stays pending
+        # for the whole session; blinking it repaints the transcript and clears
+        # the terminal scrollback every 450ms in regular mode.
+        ${lib.getExe patch} --batch -p1 -d node_modules/@vanillagreen/pi-tool-renderer < ${../patches/pi-tool-renderer-pending-blink.patch}
+
         computerUseDir="node_modules/@agent-sh/computer-use-linux/npm/bin"
         install -Dm755 ${computerUseBinary} "$computerUseDir/computer-use-linux-linux-${computerUseTarget.nodeArch}"
         install -Dm755 ${computerUseCosmic} "$computerUseDir/computer-use-linux-cosmic"

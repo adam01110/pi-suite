@@ -265,3 +265,75 @@ describe("vendored tool renderer frame caching", () => {
 		expect(changed).not.toBe(first);
 	});
 });
+
+describe("vendored tool renderer pending blink", () => {
+	const theme = { fg: (color: string, value: string) => `<${color}>${value}` };
+
+	async function vendored() {
+		const [text, glyphModule] = await Promise.all([
+			import("@vanillagreen/pi-tool-renderer/extensions/tool-renderer/text.js"),
+			import(
+				"@vanillagreen/pi-tool-renderer/extensions/tool-renderer/glyphs.js"
+			),
+		]);
+		if (!String(text.pendingStatusPrefix).includes("executionStarted &&"))
+			throw new Error(
+				"patches/pi-tool-renderer-pending-blink.patch is not applied to node_modules",
+			);
+		return { glyphModule, text };
+	}
+
+	test("blinks a running call and never a call that cannot finish", async () => {
+		const { glyphModule, text } = await vendored();
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const dir = mkdtempSync(join(tmpdir(), "pi-suite-blink-"));
+		const invalidations = { live: 0, stale: 0 };
+		try {
+			process.env.PI_CODING_AGENT_DIR = dir;
+			const cwd = join(dir, "project");
+			writeFileSync(
+				join(dir, "settings.json"),
+				JSON.stringify({
+					kendex: {
+						extensionManager: {
+							config: {
+								[RENDERER_CONFIG_ID]: { pendingStatusAnimation: true },
+							},
+						},
+					},
+				}),
+			);
+			const stale = {
+				executionStarted: false,
+				invalidate: () => {
+					invalidations.stale += 1;
+				},
+				isPartial: true,
+				toolCallId: "call-stale",
+			};
+			const live = {
+				executionStarted: true,
+				invalidate: () => {
+					invalidations.live += 1;
+				},
+				isPartial: true,
+				toolCallId: "call-live",
+			};
+
+			expect(text.pendingStatusPrefix(theme, stale, cwd)).toBe(
+				theme.fg("warning", glyphModule.glyphs(cwd).bullet),
+			);
+			text.pendingStatusPrefix(theme, live, cwd);
+			await Bun.sleep(600);
+
+			expect(invalidations.stale).toBe(0);
+			expect(invalidations.live).toBeGreaterThan(0);
+		} finally {
+			text.clearBlink({ toolCallId: "call-live" });
+			if (previousAgentDir === undefined)
+				delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			rmSync(dir, { force: true, recursive: true });
+		}
+	});
+});

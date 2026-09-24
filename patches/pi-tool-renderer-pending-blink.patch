@@ -1,0 +1,39 @@
+Patch @vanillagreen/pi-tool-renderer so only a tool call that started executing
+blinks while it is pending.
+
+Pi keeps a tool call pending until a result arrives: ToolExecutionComponent
+starts with executionStarted false and isPartial true, and only a result clears
+them. A turn aborted between the call and its result therefore leaves a card
+that stays pending forever, and the blink timer invalidates it every 450ms for
+the rest of the session. In regular TUI mode a transcript longer than the
+screen puts that card above the visible viewport, where pi-tui cannot patch a
+frame incrementally and falls back to a full redraw that erases the terminal
+scrollback (tui-main-screen.ts, "\x1b[2J\x1b[H\x1b[3J"). The result is a
+transcript that repaints twice a second and cannot be scrolled.
+
+Gating the blink on executionStarted keeps the animation for calls that are
+actually running, since only those can finish and stop it.
+
+Applied by flake/packages.nix after npm install. To apply it to a development
+checkout, run from the repository root:
+
+  patch -p1 -d node_modules/@vanillagreen/pi-tool-renderer < patches/pi-tool-renderer-pending-blink.patch
+
+Upstream: github.com/vanillagreencom/kendex
+
+--- a/extensions/tool-renderer/text.ts
++++ b/extensions/tool-renderer/text.ts
+@@ -188,7 +188,12 @@
+ }
+ 
+ export function pendingStatusPrefix(theme: any, context: any, cwd?: string): string {
+-	if (pendingStatusAnimation(context?.cwd ?? cwd)) return blinkingPrefix(theme, context, cwd);
++	// A call that never started executing can never finish, so blinking it only
++	// invalidates frames for the rest of the session. In regular mode each of
++	// those repaints clears the terminal scrollback.
++	if (context?.executionStarted && pendingStatusAnimation(context?.cwd ?? cwd)) {
++		return blinkingPrefix(theme, context, cwd);
++	}
+ 	clearBlink(context);
+ 	return theme.fg("warning", glyphs(context?.cwd ?? cwd).bullet);
+ }
