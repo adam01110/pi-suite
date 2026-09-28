@@ -16,15 +16,15 @@ _: {
       if stdenv.hostPlatform.isx86_64
       then {
         arch = "x86_64";
-        binaryHash = "sha256-YWC4fWHFbVITc0pljMrgIDiQ392ZaFs7mOdLrU0TtIY=";
-        cosmicHash = "sha256-GxNnCH++szJVqXmU8seC33rnLVe+lqCJPPQZHvorz0s=";
+        binaryHash = "sha256-3WK3K1tYM8JVflXTRG9aRDxnZcRZAXJH/r3hDWZqbgQ=";
+        cosmicHash = "sha256-MkH09IH7edYT1sioDYnNMMwuSufBwfq9TJ0yceh85gU=";
         nodeArch = "x64";
       }
       else if stdenv.hostPlatform.isAarch64
       then {
         arch = "aarch64";
-        binaryHash = "sha256-RvOgHF68Kd9UT9Q+3qEiCq0qddLb8CxsyqyQQEl27f4=";
-        cosmicHash = "sha256-8dSmWBB7/+kFR5sTHa8L5zb/A7sBRf0Fn1WeBe7sobI=";
+        binaryHash = "sha256-TwE557UVQ6pIhkb57Gbb+GtAissPxQzrkFYD5zT4F/E=";
+        cosmicHash = "sha256-mvDIjWXyINdAFikmDcNCzTHlrcq9r/BGIJAQMiK6Y6I=";
         nodeArch = "arm64";
       }
       else throw "pi-suite: unsupported computer-use-linux architecture";
@@ -33,7 +33,7 @@ _: {
     # package.json: the Pi extension spawns these binaries from npm/bin.
     fetchComputerUse = name: hash:
       fetchurl {
-        url = "https://github.com/agent-sh/computer-use-linux/releases/download/v0.7.0/${name}-${computerUseTarget.arch}-unknown-linux-gnu";
+        url = "https://github.com/agent-sh/computer-use-linux/releases/download/v0.7.5/${name}-${computerUseTarget.arch}-unknown-linux-gnu";
         inherit hash;
       };
 
@@ -70,7 +70,7 @@ _: {
         ];
       };
 
-      npmDepsHash = "sha256-Hbx0V7xs/mRAPxjrsHennuIW7AJwE9NBOU7Lz8a8hrE=";
+      npmDepsHash = "sha256-xR19ZPIsLId/cYQeou//iS346Ayesa6zQUAvQtaKh2s=";
       makeCacheWritable = true;
       npmInstallFlags = [
         "--legacy-peer-deps"

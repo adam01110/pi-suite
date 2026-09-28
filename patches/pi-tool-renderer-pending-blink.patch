@@ -12,7 +12,9 @@ scrollback (tui-main-screen.ts, "\x1b[2J\x1b[H\x1b[3J"). The result is a
 transcript that repaints twice a second and cannot be scrolled.
 
 Gating the blink on executionStarted keeps the animation for calls that are
-actually running, since only those can finish and stop it.
+actually running, since only those can finish and stop it. Pi#7194 describes
+the regular-mode off-screen full-redraw mechanism; its fullscreen alternative
+does not change the abandoned-card behavior in regular mode.
 
 Applied by flake/packages.nix after npm install. To apply it to a development
 checkout, run from the repository root:

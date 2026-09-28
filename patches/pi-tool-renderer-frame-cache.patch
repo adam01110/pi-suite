@@ -1,11 +1,12 @@
 Patch @vanillagreen/pi-tool-renderer so a TUI frame neither re-reads settings
 files nor re-wraps unchanged tool chrome.
 
-Pi re-renders the entire transcript on every frame, and this renderer runs its
-chrome and user-message paths per message per frame. Two hot spots made
-keystroke latency grow with transcript length: readPackageConfig parsed every
-settings file on each call, and renderToolChromeLines re-wrapped every line of
-every tool block on every render.
+Pi regular mode re-renders the entire transcript on every frame. Renderer 2.0.2
+already caches parsed settings by fingerprint, but still stats settings files on
+every call; this patch bounds those checks to once per 250 ms and reuses wrapped
+chrome lines for unchanged components. It does not avoid Pi's transcript walk.
+The fullscreen renderer avoids the off-screen redraw in pi#7194, but regular
+mode still does this work; the viewport-caching PR pi#7082 was not merged.
 
 Applied by flake/packages.nix after npm install. To apply it to a development
 checkout, run from the repository root:
@@ -16,73 +17,52 @@ Upstream: github.com/vanillagreencom/kendex
 
 --- a/extensions/tool-renderer/settings.ts
 +++ b/extensions/tool-renderer/settings.ts
-@@ -1,4 +1,4 @@
--import { existsSync, readFileSync } from "node:fs";
-+import { existsSync, readFileSync, statSync } from "node:fs";
- import { homedir } from "node:os";
- import { dirname, join, resolve } from "node:path";
- 
-@@ -70,9 +70,48 @@
+@@ -70,7 +70,17 @@
  	return projectSettingsTrusted(project) ? [user, project] : [user];
  }
  
-+/** How long a cached package config may skip its settings-file stat check. */
+-let cachedPackageConfig: { packageId: string; fingerprint: string; merged: Record<string, unknown> } | undefined;
++/** Bound settings-file stat calls during repeated transcript renders. */
 +const PACKAGE_CONFIG_TTL_MS = 250;
 +
 +interface PackageConfigCacheEntry {
 +	expiresAt: number;
-+	paths: string[];
-+	stamp: string;
-+	value: Record<string, unknown>;
++	fingerprint: string;
++	merged: Record<string, unknown>;
 +}
 +
 +const packageConfigCache = new Map<string, PackageConfigCacheEntry>();
 +let settingsGeneration = 0;
-+
-+function settingsStamp(paths: readonly string[]): string {
-+	let stamp = "";
-+	for (const settingsPath of paths) {
-+		try {
-+			const info = statSync(settingsPath);
-+			stamp += `${settingsPath}\u0000${info.mtimeMs}\u0000${info.size}\u0000`;
-+		} catch {
-+			stamp += `${settingsPath}\u0000missing\u0000`;
-+		}
-+	}
-+	return stamp;
-+}
-+
+ 
+ /** Per candidate: path + stat stamp, so two roots can never share a cache entry. */
+ function settingsFingerprint(packageId: string, settingsPaths: string[]): string {
+@@ -80,9 +90,17 @@
+ }
+ 
  export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
-+	const cacheKey = `${packageId}\u0000${cwd ?? ""}`;
++	const cacheKey = JSON.stringify([packageId, cwd ?? "", process.env.PI_CODING_AGENT_DIR ?? ""]);
 +	const cached = packageConfigCache.get(cacheKey);
-+	if (cached && cached.expiresAt > Date.now()) return cached.value;
++	if (cached && cached.expiresAt > Date.now()) return cached.merged;
 +
-+	// Recomputing the paths picks up project trust changes and newly created
-+	// settings files; the stamp then decides whether a re-read is needed.
-+	const paths = piSettingsPaths(cwd);
-+	const stamp = settingsStamp(paths);
-+	if (cached && cached.stamp === stamp) {
++	// Refresh paths after the TTL to pick up project trust and newly created settings files.
+ 	const settingsPaths = piSettingsPaths(cwd);
+ 	const fingerprint = settingsFingerprint(packageId, settingsPaths);
+-	if (cachedPackageConfig && cachedPackageConfig.packageId === packageId && cachedPackageConfig.fingerprint === fingerprint) return cachedPackageConfig.merged;
++	if (cached && cached.fingerprint === fingerprint) {
 +		cached.expiresAt = Date.now() + PACKAGE_CONFIG_TTL_MS;
-+		return cached.value;
++		return cached.merged;
 +	}
-+
  	const merged: Record<string, unknown> = {};
--	for (const settingsPath of piSettingsPaths(cwd)) {
-+	for (const settingsPath of paths) {
+ 	for (const settingsPath of settingsPaths) {
  		if (!existsSync(settingsPath)) continue;
- 		try {
- 			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
-@@ -82,6 +121,8 @@
+@@ -94,10 +112,16 @@
  			// Ignore malformed optional manager config.
  		}
  	}
+-	cachedPackageConfig = { packageId, fingerprint, merged };
 +	settingsGeneration += 1;
-+	packageConfigCache.set(cacheKey, { expiresAt: Date.now() + PACKAGE_CONFIG_TTL_MS, paths, stamp, value: merged });
++	packageConfigCache.set(cacheKey, { expiresAt: Date.now() + PACKAGE_CONFIG_TTL_MS, fingerprint, merged });
  	return merged;
- }
- 
-@@ -89,6 +130,11 @@
- 	return readPackageConfig(CONFIG_ID, cwd) as kendexConfig;
  }
  
 +/** Bumped whenever a settings re-read happens, so render caches can drop stale frames. */
@@ -90,9 +70,9 @@ Upstream: github.com/vanillagreencom/kendex
 +	return settingsGeneration;
 +}
 +
- export function settingNumber(key: string, fallback: number, cwd?: string): number {
- 	const value = readkendexConfig(cwd)[key];
- 	const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+ export function readkendexConfig(cwd?: string): kendexConfig {
+ 	return readPackageConfig(CONFIG_ID, cwd) as kendexConfig;
+ }
 --- a/extensions/tool-renderer/chrome.ts
 +++ b/extensions/tool-renderer/chrome.ts
 @@ -21,7 +21,7 @@
@@ -100,7 +80,7 @@ Upstream: github.com/vanillagreencom/kendex
  	componentDefinesRenderer,
  } from "./generic.js";
 -import { settingBoolean, settingEnum, toolChromeMode } from "./settings.js";
-+import { currentSettingsGeneration, settingBoolean, settingEnum, toolChromeMode } from "./settings.js";
++import { currentSettingsGeneration, readkendexConfig, settingBoolean, settingEnum, toolChromeMode } from "./settings.js";
  import { RESERVED_IMAGE_ROW_MARKER, TOOL_RENDER_OVERLAY_CHECK_SYMBOL } from "./overlay.js";
  import { trackToolExecutionComponent } from "./live-settings.js";
  import { glyphs } from "./glyphs.js";
@@ -136,10 +116,13 @@ Upstream: github.com/vanillagreencom/kendex
  const TOOL_CHROME_THEME_SYMBOL = Symbol.for("kendex.pi-tool-renderer.tool-chrome-theme");
  const WORKING_LOADER_ALIGNMENT_PATCH_SYMBOL = Symbol.for("kendex.pi-tool-renderer.working-loader-alignment-patch");
  
-@@ -164,6 +189,29 @@
+@@ -164,6 +189,32 @@
  }
  
  function renderToolChromeLines(component: any, rendered: string[], width: number): string[] {
++	// Refresh the settings TTL before comparing generations; otherwise an idle
++	// cached component could keep stale chrome indefinitely.
++	readkendexConfig(component?.cwd ?? process.cwd());
 +	const cache = component?.[TOOL_CHROME_RENDER_CACHE_SYMBOL] as ToolChromeRenderCache | undefined;
 +	if (cache) {
 +		const generation = currentSettingsGeneration();
