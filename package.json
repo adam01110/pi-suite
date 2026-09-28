@@ -24,12 +24,13 @@
 		"pi-ask-user": "0.15.0",
 		"pi-atuin": "0.1.13",
 		"pi-btw": "0.5.0",
-		"pi-cache-optimizer": "2.8.10",
+		"pi-cache-optimizer": "2.8.11",
 		"pi-cc-header": "1.1.1",
 		"pi-fast-resume": "1.4.11",
 		"pi-footer": "0.5.1",
 		"pi-lsp": "0.1.7",
 		"pi-mcp-adapter": "2.34.0",
+		"pi-opencode-go-cache": "0.3.1",
 		"pi-rewind": "0.5.0",
 		"pi-web-access": "0.29.0"
 	},
@@ -50,23 +51,6 @@
 		"typebox": "*"
 	},
 	"bundledDependencies": true,
-	"overrides": {
-		"@modelcontextprotocol/client": "2.0.0",
-		"@modelcontextprotocol/core": "2.0.0",
-		"fast-uri": "3.1.6"
-	},
-	"pi": {
-		"extensions": [
-			"./src/index.ts",
-			"./node_modules/cc-safety-net/dist/pi/index.js"
-		],
-		"skills": [
-			"./skills/ask-user",
-			"./skills/computer-use-linux",
-			"./skills/mcp-scripting",
-			"./skills/subagent-workflows"
-		]
-	},
 	"bundleDependencies": [
 		"@agent-sh/computer-use-linux",
 		"@agnishc/edb-context-viewer",
@@ -86,7 +70,25 @@
 		"pi-footer",
 		"pi-lsp",
 		"pi-mcp-adapter",
+		"pi-opencode-go-cache",
 		"pi-rewind",
 		"pi-web-access"
-	]
+	],
+	"overrides": {
+		"@modelcontextprotocol/client": "2.0.0",
+		"@modelcontextprotocol/core": "2.0.0",
+		"fast-uri": "3.1.6"
+	},
+	"pi": {
+		"extensions": [
+			"./src/index.ts",
+			"./node_modules/cc-safety-net/dist/pi/index.js"
+		],
+		"skills": [
+			"./skills/ask-user",
+			"./skills/computer-use-linux",
+			"./skills/mcp-scripting",
+			"./skills/subagent-workflows"
+		]
+	}
 }

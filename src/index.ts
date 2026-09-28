@@ -121,6 +121,13 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 			optional: true,
 		},
 		{
+			id: "opencode-go-cache",
+			factory: upstreamFactory(
+				"pi-opencode-go-cache/extensions/opencode-go-cache.ts",
+			),
+			optional: true,
+		},
+		{
 			id: "atuin",
 			factory: suppressCommands(atuin, BLOCKED_COMMANDS.atuin),
 			optional: true,
