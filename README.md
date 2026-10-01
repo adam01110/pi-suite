@@ -48,6 +48,22 @@ extension entrypoint. I build it with Nix and load the resulting package through
 Pi's `settings.packages` option. MCP and `codemode` use Pi's built-in support;
 enable `codemode` for probe batching with `"defaultTools": ["+codemode"]`.
 
+`patches/pi-native-mcp-lazy.patch` targets Pi 0.99.2 and is applied by the Pi
+Nix derivation, not loaded as a suite extension. Set a native server's
+`"lifecycle": "lazy"` to prevent startup connections; first use is
+`mcp_connect({server: "name"})`, followed by normal native discovery and tools.
+`"idleTimeout": 60` disconnects after 60 idle **seconds**, retaining session
+schemas so later calls reconnect. Defaults remain eager and no idle disconnect.
+No persistent schema cache, adapter, or alternate tool pipeline is added.
+
+The patch includes a real stdio fixture and native Vitest regression tests. After
+applying it to a writable Pi source tree with its dependencies available, run
+them with Bun using the suite's isolated Vitest compatibility preload:
+
+```bash
+bun test --preload ./test/support/native-mcp-vitest.ts "$PI_NATIVE_SOURCE/packages/coding-agent/test/mcp-lazy.test.ts"
+```
+
 Build the package with:
 
 ```bash

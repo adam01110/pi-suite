@@ -1,0 +1,727 @@
+--- a/packages/coding-agent/src/core/mcp-servers.ts
++++ b/packages/coding-agent/src/core/mcp-servers.ts
+@@ -22,6 +22,10 @@
+ const MCP_EXPOSURE_ALIASES: Readonly<Record<string, McpExposure>> = { "codemode-deferred": "codemode" };
+ 
+ interface McpServerConfigBase {
++	/** Default: eager. Lazy servers connect only on explicit activation or a retained tool call. */
++	lifecycle?: "eager" | "lazy";
++	/** Idle disconnect delay in seconds. Zero (the default) keeps the connection open. */
++	idleTimeout?: number;
+ 	/** Default: `codemode`. */
+ 	exposure?: McpExposure;
+ 	/**
+@@ -193,7 +197,19 @@
+ 	if (!SERVER_NAME.test(name)) return `invalid server name "${name}" (use letters, digits, "_" and "-")`;
+ 	if (!isRecord(raw)) return `server "${name}" must be an object`;
+ 	const value = resolveExposureAliases(raw);
+-	const { type, exposure, enabled, timeout, toolExposure, description } = value;
++	const { type, exposure, enabled, timeout, toolExposure, description, lifecycle, idleTimeout } = value;
++	if (lifecycle !== undefined && lifecycle !== "eager" && lifecycle !== "lazy") {
++		return `server "${name}": lifecycle must be eager or lazy`;
++	}
++	if (
++		idleTimeout !== undefined &&
++		(typeof idleTimeout !== "number" ||
++			!Number.isFinite(idleTimeout) ||
++			idleTimeout < 0 ||
++			idleTimeout * 1000 > 2_147_483_647)
++	) {
++		return `server "${name}": idleTimeout must be a non-negative number of seconds within the timer range`;
++	}
+ 	const exposures = MCP_EXPOSURES.map((value) => `"${value}"`).join(", ");
+ 	if (exposure !== undefined && !isExposure(exposure)) {
+ 		return `server "${name}": exposure must be one of ${exposures}`;
+--- a/packages/coding-agent/src/extensions/mcp/index.ts
++++ b/packages/coding-agent/src/extensions/mcp/index.ts
+@@ -28,7 +28,7 @@
+ 
+ import { join, resolve } from "node:path";
+ import type { SelectItem } from "@earendil-works/pi-tui";
+-import type { TSchema } from "typebox";
++import { Type, type TSchema } from "typebox";
+ import { getAgentDir } from "../../config.ts";
+ import type {
+ 	ExtensionAPI,
+@@ -444,7 +444,41 @@
+ 		 * one the tools' exposure asks for: codemode for `codemode` unless `autoEnableCodemode` is false,
+ 		 * tool_search for `deferred`.
+ 		 */
++		let connectorRegistered = false;
+ 		const ensureDiscoveryActive = (ctx: ExtensionContext) => {
++			const lazy = servers.filter((server) => isEnabled(server) && server.entry.config.lifecycle === "lazy");
++			if (lazy.length || connectorRegistered)
++				pi.registerTool({
++					name: "mcp_connect",
++					label: "Connect MCP server",
++					description: `Activate a configured lazy MCP server and discover its native tools. Servers: ${lazy.map((server) => server.entry.name).join(", ") || "none"}. Call before searching or using a server's tools for the first time.`,
++					exposure: lazy.length ? "direct" : "hidden",
++					parameters: Type.Object({ server: Type.String() }),
++					execute: async (_id, { server: name }) => {
++						const server = findServer(name);
++						await server?.ready;
++						if (
++							!server ||
++							!isEnabled(server) ||
++							server.entry.config.lifecycle !== "lazy" ||
++							!server.connection ||
++							findServer(name) !== server
++						) {
++							throw new Error(`No enabled lazy MCP server named "${name}"`);
++						}
++						await server.connection.getClient();
++						return {
++							content: [
++								{
++									type: "text",
++									text: `Connected to ${name}. Native tools: ${[...(serverTools.get(name) ?? [])].join(", ") || "none"}.`,
++								},
++							],
++							details: undefined,
++						};
++					},
++				});
++			connectorRegistered ||= lazy.length > 0;
+ 			// From the config, so the tool is active before the servers connect. Resource tools share
+ 			// their server's exposure.
+ 			const exposures = new Set<McpExposure>();
+@@ -525,17 +559,16 @@
+ 		 * failures show in its state. It starts after `after`; `isCurrent` stops it when the session ended
+ 		 * meanwhile. The returned promise rejects when the MCP runtime cannot be loaded.
+ 		 */
+-		const startConnection = (
+-			server: McpServer,
+-			isCurrent: () => boolean,
+-			after?: Promise<unknown>,
+-		): Promise<void> => {
++		const startConnection = (server: McpServer, isCurrent: () => boolean, after?: Promise<unknown>): Promise<void> => {
+ 			const ready = (async () => {
+ 				await after;
+ 				if (!isCurrent()) return;
+ 				const connection = await createConnection(server);
+-				if (!isCurrent()) return;
+-				await connection.getClient().catch(() => undefined);
++				if (!isCurrent()) {
++					await connection.close();
++					return;
++				}
++				if (server.entry.config.lifecycle !== "lazy") await connection.getClient().catch(() => undefined);
+ 			})();
+ 			server.ready = ready.catch(() => undefined);
+ 			return ready;
+@@ -564,8 +597,7 @@
+ 			const lines = only ? [] : configErrors.map((error) => `config: ${error}`);
+ 			for (const server of only ?? servers) {
+ 				const state = server.connection?.state;
+-				if (state === "needs-auth" || state === "failed")
+-					lines.push(`${server.entry.name}: ${describeState(server)}`);
++				if (state === "needs-auth" || state === "failed") lines.push(`${server.entry.name}: ${describeState(server)}`);
+ 			}
+ 			if (lines.length === 0) return;
+ 			ctx.ui.notify(
+@@ -644,6 +676,7 @@
+ 			if (!enabled) {
+ 				const connection = server.connection;
+ 				server.connection = undefined;
++				server.ready = undefined;
+ 				hideTools(server.entry.name);
+ 				emitChange();
+ 				await connection?.close();
+@@ -656,7 +689,7 @@
+ 		const setExposure = (server: McpServer, exposure: McpExposure): string | undefined => {
+ 			const failed = saveConfig(server, { exposure });
+ 			if (failed) return failed;
+-			if (server.connection?.state === "connected") registerTools(server.connection);
++			if (server.connection) registerTools(server.connection);
+ 			syncResourceTools();
+ 			// Tools no longer exposed directly leave the declared set; direct tools are activated on registration.
+ 			const indirect = new Set(
+@@ -718,15 +751,20 @@
+ 				items.push({ value: "enable", label: "Enable", description: saved });
+ 			} else {
+ 				const state = connection?.state;
+-				if (state === "needs-auth")
+-					items.push({ value: "signin", label: "Sign in", description: "opens the browser" });
+-				if (state === "connected" && connection) {
++				if (state === "needs-auth") items.push({ value: "signin", label: "Sign in", description: "opens the browser" });
++				if ((state === "connected" || state === "idle") && connection) {
+ 					items.push({ value: "tools", label: "Tools", description: `${connection.tools.length} offered` });
+ 				}
+-				if (state === "failed" || state === "disconnected" || state === "connected" || state === "needs-auth") {
++				if (
++					state === "failed" ||
++					state === "disconnected" ||
++					state === "connected" ||
++					state === "needs-auth" ||
++					state === "idle"
++				) {
+ 					items.push({ value: "reconnect", label: "Reconnect" });
+ 				}
+-				if (state === "connected" && connection?.oauthUrl) {
++				if ((state === "connected" || state === "idle") && connection?.oauthUrl) {
+ 					items.push({ value: "signout", label: "Sign out", description: "deletes the stored credentials" });
+ 				}
+ 				items.push({ value: "exposure", label: "Exposure", description: exposureOf(entry) });
+@@ -863,8 +901,7 @@
+ 				const { name } = server.entry;
+ 				const exposure = exposureOf(server.entry);
+ 				const connection = server.connection;
+-				if (connection?.state === "needs-auth")
+-					return `${name}: needs sign-in, run /mcp login ${name} (${exposure})`;
++				if (connection?.state === "needs-auth") return `${name}: needs sign-in, run /mcp login ${name} (${exposure})`;
+ 				const tools = connection?.state === "connected" ? `, ${connection.tools.length} tools` : "";
+ 				const state = !isEnabled(server)
+ 					? "disabled"
+@@ -956,6 +993,7 @@
+ 			const registered = registeredServers();
+ 			overridden = registered.overridden;
+ 			servers = [...loaded.servers.map((entry) => ({ entry })), ...registered.servers];
++			pending = undefined;
+ 			emitChange();
+ 			// Codemode or tool_search is activated from the config: the first prompt does not wait for
+ 			// servers whose tools are not declared to the model, and scripts or searches wait for them.
+@@ -1097,9 +1135,7 @@
+ 				}
+ 				if (action !== "login" && action !== "logout" && action !== "reconnect") return null;
+ 				const items = servers
+-					.filter((candidate) =>
+-						action === "reconnect" ? candidate.connection !== undefined : usesOAuth(candidate),
+-					)
++					.filter((candidate) => (action === "reconnect" ? candidate.connection !== undefined : usesOAuth(candidate)))
+ 					.filter((candidate) => candidate.entry.name.startsWith(server))
+ 					.map((candidate) => ({
+ 						value: `${action} ${candidate.entry.name}`,
+@@ -1150,10 +1186,7 @@
+ 						if (failure) ctx.ui.notify(failure, "error");
+ 						else {
+ 							ensureDiscoveryActive(ctx);
+-							ctx.ui.notify(
+-								`Reconnected to MCP server "${server.entry.name}" (${describeState(server)}).`,
+-								"info",
+-							);
++							ctx.ui.notify(`Reconnected to MCP server "${server.entry.name}" (${describeState(server)}).`, "info");
+ 						}
+ 						return;
+ 					}
+--- a/packages/coding-agent/src/extensions/mcp/runtime.ts
++++ b/packages/coding-agent/src/extensions/mcp/runtime.ts
+@@ -53,7 +53,7 @@
+  * `disconnected`: the connection dropped (for example the stdio server exited); the next call
+  * reconnects.
+  */
+-type ServerState = "connecting" | "connected" | "disconnected" | "needs-auth" | "failed" | "closed";
++type ServerState = "idle" | "connecting" | "connected" | "disconnected" | "needs-auth" | "failed" | "closed";
+ 
+ export type McpTransportFactory = (
+ 	entry: McpServerEntry,
+@@ -169,8 +169,13 @@
+ 	/** Last OAuth challenge from the server; sign-in uses its resource metadata URL and scope. */
+ 	challenge: OAuthChallenge | undefined;
+ 	private client: McpClient | undefined;
++	private connectingClient: McpClient | undefined;
++	private closing: Promise<void> | undefined;
+ 	private opening: Promise<McpClient> | undefined;
+ 	private closed = false;
++	private activeRequests = 0;
++	private idleTimer: ReturnType<typeof setTimeout> | undefined;
++	private idleClosing: Promise<void> | undefined;
+ 	/** Stderr of the last stdio server that failed to connect. */
+ 	private stderrTail: string | undefined;
+ 	private readonly cwd: string;
+@@ -194,6 +199,7 @@
+ 		log?: McpServerLog;
+ 	}) {
+ 		this.entry = options.entry;
++		if (options.entry.config.lifecycle === "lazy") this.state = "idle";
+ 		this.cwd = options.cwd;
+ 		this.createTransport = options.createTransport;
+ 		this.onTools = options.onTools;
+@@ -246,14 +252,60 @@
+ 	}
+ 
+ 	getClient(): Promise<McpClient> {
++		this.cancelIdleTimer();
++		if (this.idleClosing) return this.idleClosing.then(() => this.getClient());
+ 		if (this.closed) return Promise.reject(new Error(`MCP server "${this.entry.name}" is shut down`));
+-		if (this.client?.connectionState === "connected") return Promise.resolve(this.client);
++		if (this.client?.connectionState === "connected") {
++			this.scheduleIdle();
++			return Promise.resolve(this.client);
++		}
+ 		this.opening ??= this.open().finally(() => {
+ 			this.opening = undefined;
++			this.scheduleIdle();
+ 		});
+ 		return this.opening;
+ 	}
+ 
++	private cancelIdleTimer(): void {
++		clearTimeout(this.idleTimer);
++		this.idleTimer = undefined;
++	}
++
++	private scheduleIdle(): void {
++		this.cancelIdleTimer();
++		const seconds = this.entry.config.idleTimeout ?? 0;
++		if (!seconds || this.closed || this.activeRequests || this.opening || !this.client) return;
++		this.idleTimer = setTimeout(() => {
++			this.idleTimer = undefined;
++			if (this.closed || this.activeRequests || this.opening || !this.client) return;
++			const client = this.client;
++			this.client = undefined;
++			this.idleClosing = client
++				.close()
++				.catch(() => undefined)
++				.finally(() => {
++					this.idleClosing = undefined;
++					if (!this.closed) {
++						this.state = "idle";
++						this.error = undefined;
++						this.changed();
++					}
++				});
++		}, seconds * 1000);
++		this.idleTimer.unref();
++	}
++
++	private async withActivity<T>(run: () => Promise<T>): Promise<T> {
++		this.cancelIdleTimer();
++		this.activeRequests++;
++		try {
++			return await run();
++		} finally {
++			this.activeRequests--;
++			this.scheduleIdle();
++		}
++	}
++
+ 	callTool(name: string, args: Record<string, unknown>, options: McpRequestOptions): Promise<CallToolResult> {
+ 		return this.withClient((client) => client.callTool(name, args, options));
+ 	}
+@@ -268,8 +320,7 @@
+ 
+ 	resourceTemplatesPage(cursor: string | undefined, options: McpRequestOptions): Promise<ListResourceTemplatesResult> {
+ 		return this.withClient(
+-			(client) =>
+-				withoutTemplates(() => client.listResourceTemplatesPage(cursor, options), { resourceTemplates: [] }),
++			(client) => withoutTemplates(() => client.listResourceTemplatesPage(cursor, options), { resourceTemplates: [] }),
+ 			true,
+ 		);
+ 	}
+@@ -286,7 +337,11 @@
+ 	 * Run a request, reconnecting when needed. `readOnly` requests are retried once after a transient
+ 	 * HTTP error; tool calls are not, since they may have run.
+ 	 */
+-	private async withClient<T>(run: (client: McpClient) => Promise<T>, readOnly = false): Promise<T> {
++	private withClient<T>(run: (client: McpClient) => Promise<T>, readOnly = false): Promise<T> {
++		return this.withActivity(() => this.requestWithClient(run, readOnly));
++	}
++
++	private async requestWithClient<T>(run: (client: McpClient) => Promise<T>, readOnly: boolean): Promise<T> {
+ 		for (let attempt = 1; ; attempt++) {
+ 			const client = await this.getClient();
+ 			try {
+@@ -313,13 +368,18 @@
+ 
+ 	/** Connect again with fresh credentials, for example after signing in. */
+ 	async reconnect(): Promise<void> {
+-		await this.opening?.catch(() => undefined);
+-		if (this.client) await this.dropClient(this.client);
+-		await this.getClient();
++		await this.withActivity(async () => {
++			await this.idleClosing;
++			await this.opening?.catch(() => undefined);
++			if (this.client) await this.dropClient(this.client);
++			await this.getClient();
++		});
+ 	}
+ 
+ 	/** Disconnect after the stored credentials were removed. */
+ 	async signOut(): Promise<void> {
++		this.cancelIdleTimer();
++		await this.idleClosing;
+ 		await this.opening?.catch(() => undefined);
+ 		if (this.client) await this.dropClient(this.client);
+ 		if (!this.closed) this.markNeedsAuth();
+@@ -374,6 +434,7 @@
+ 			requestTimeoutMs: this.timeoutMs,
+ 			roots: [{ uri: pathToFileURL(this.cwd).href, name: basename(this.cwd) }],
+ 		});
++		this.connectingClient = client;
+ 		const log = this.log;
+ 		if (log) client.onNotification("notifications/message", (params) => log.write(this.entry.name, params));
+ 		let transport: McpTransport | undefined;
+@@ -381,10 +442,10 @@
+ 			transport = this.createTransport(this.entry, this.cwd, this.authProvider);
+ 			await client.connect(transport);
+ 			client.onNotification("notifications/tools/list_changed", () => {
+-				void this.refreshTools(client);
++				void this.withActivity(() => this.refreshTools(client));
+ 			});
+ 			client.onNotification("notifications/resources/list_changed", () => {
+-				void this.refreshResources(client);
++				void this.withActivity(() => this.refreshResources(client));
+ 			});
+ 			const stdio = transport instanceof StdioTransport ? transport : undefined;
+ 			client.onClose(() => this.handleClientClose(client, stdio));
+@@ -412,7 +473,9 @@
+ 			if (transport instanceof StdioTransport) {
+ 				this.stderrTail = transport.stderr.trim().slice(-STDERR_TAIL_CHARS) || undefined;
+ 			}
+-			throw error;
++			throw this.closed ? new Error("shut down while connecting") : error;
++		} finally {
++			if (this.connectingClient === client) this.connectingClient = undefined;
+ 		}
+ 	}
+ 
+@@ -458,13 +521,23 @@
+ 		this.changed();
+ 	}
+ 
+-	async close(): Promise<void> {
++	close(): Promise<void> {
++		this.closing ??= this.shutDown();
++		return this.closing;
++	}
++
++	private async shutDown(): Promise<void> {
+ 		this.closed = true;
++		this.cancelIdleTimer();
+ 		this.state = "closed";
+ 		this.changed();
+-		const client = this.client;
++		const clients = new Set([this.client, this.connectingClient]);
+ 		this.client = undefined;
+-		await client?.close().catch(() => undefined);
++		await Promise.all([
++			...[...clients].map((client) => client?.close().catch(() => undefined)),
++			this.idleClosing,
++			this.opening?.catch(() => undefined),
++		]);
+ 		// A refresh the server already answered may have rotated the refresh token; exiting before the
+ 		// new tokens are saved would lose the grant.
+ 		await this.authProvider?.settled();
+--- /dev/null
++++ b/packages/coding-agent/test/mcp-lazy.test.ts
+@@ -0,0 +1,263 @@
++import { afterEach, describe, expect, it, vi as jest } from "vitest";
++import { mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { dirname, join } from "node:path";
++import { fileURLToPath } from "node:url";
++import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "../src/core/extensions/types.ts";
++import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
++import { validateMcpServerConfig } from "../src/core/mcp-servers.ts";
++import { createMcpExtension } from "../src/extensions/mcp/index.ts";
++import { createDefaultTransport, McpOAuthCredentialStore, McpServerConnection } from "../src/extensions/mcp/runtime.ts";
++
++const fixture = join(dirname(fileURLToPath(import.meta.url)), "fixtures/mcp-lazy-server.mjs");
++const dirs: string[] = [];
++const cleanup: (() => Promise<void>)[] = [];
++
++afterEach(async () => {
++	jest.useRealTimers();
++	for (const close of cleanup.splice(0)) await close();
++	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
++});
++
++function setup() {
++	const dir = mkdtempSync(join(tmpdir(), "pi-lazy-"));
++	dirs.push(dir);
++	const log = join(dir, "events");
++	writeFileSync(log, "");
++	const events = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean);
++	const config = {
++		command: process.execPath,
++		args: [fixture, log],
++		lifecycle: "lazy" as const,
++		idleTimeout: 1,
++		exposure: "direct" as const,
++	};
++	return { dir, log, events, entry: { name: "lazy", source: "test", config } };
++}
++
++function observed(log: string, event: string, count = 1): Promise<void> {
++	return new Promise((resolve) => {
++		const check = () => {
++			if (
++				readFileSync(log, "utf8")
++					.split("\n")
++					.filter((line) => line === event).length < count
++			)
++				return;
++			watcher.close();
++			resolve();
++		};
++		const watcher = watch(log, check);
++		check();
++	});
++}
++
++function runtime(stall?: string) {
++	const data = setup();
++	if (stall) data.entry.config.args.push(stall);
++	let onStalled: () => void;
++	const stalled = new Promise<void>((resolve) => {
++		onStalled = resolve;
++	});
++	let idle: (() => void) | undefined;
++	const connection = new McpServerConnection({
++		entry: data.entry,
++		cwd: data.dir,
++		createTransport: (entry, cwd, auth) => {
++			const transport = createDefaultTransport(entry, cwd, auth);
++			transport.onMessage((message) => {
++				if ("method" in message && message.method === "notifications/lazy/stalled") onStalled();
++			});
++			return transport;
++		},
++		credentials: new McpOAuthCredentialStore(new InMemoryAuthStorageBackend()),
++		onTools: () => {},
++		onChange: (current) => {
++			if (current.state === "idle") idle?.();
++		},
++	});
++	cleanup.push(() => connection.close());
++	return {
++		...data,
++		connection,
++		stalled,
++		idle: () =>
++			new Promise<void>((resolve) => {
++				idle = resolve;
++			}),
++	};
++}
++
++async function extension(configOverride = {}) {
++	const data = setup();
++	Object.assign(data.entry.config, configOverride);
++	const tools = new Map<string, ToolDefinition>();
++	const handlers = new Map<string, (...args: any[]) => any>();
++	const commands = new Map<string, any>();
++	let active: string[] = [];
++	const pi = {
++		on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler),
++		registerCommand: (name: string, definition: unknown) => commands.set(name, definition),
++		registerTool: (definition: ToolDefinition) => {
++			tools.set(definition.name, definition);
++			if (definition.exposure === "direct") active.push(definition.name);
++		},
++		getMcpServers: () => [],
++		getAllTools: () => [...tools.values()],
++		getActiveTools: () => active,
++		setActiveTools: (names: string[]) => {
++			active = names;
++		},
++	} as unknown as ExtensionAPI;
++	const ctx = {
++		cwd: data.dir,
++		mode: "json",
++		modelRegistry: {},
++		ui: { notify: () => {} },
++	} as unknown as ExtensionToolContext;
++	createMcpExtension({
++		loadConfig: () => ({ servers: [data.entry], errors: [] }),
++		credentials: new McpOAuthCredentialStore(new InMemoryAuthStorageBackend()),
++		logPath: join(data.dir, "mcp.log"),
++	})(pi);
++	await handlers.get("session_start")?.({}, ctx);
++	cleanup.push(async () => {
++		await handlers.get("session_shutdown")?.({}, ctx);
++	});
++	await commands.get("mcp").handler("", ctx);
++	const call = (name: string, args = {}) => tools.get(name)!.execute("test", args, undefined, undefined, ctx);
++	return { ...data, tools, handlers, commands, ctx, call };
++}
++
++describe("native lazy MCP lifecycle (real stdio)", () => {
++	it("validates lifecycle and finite seconds without changing defaults", () => {
++		expect(validateMcpServerConfig("x", { command: "x" })).toEqual({ command: "x" });
++		for (const value of [-1, Infinity, NaN, "60", 2147484])
++			expect(typeof validateMcpServerConfig("x", { command: "x", idleTimeout: value })).toBe("string");
++		expect(typeof validateMcpServerConfig("x", { command: "x", lifecycle: "other" })).toBe("string");
++		expect(validateMcpServerConfig("x", { command: "x", lifecycle: "lazy", idleTimeout: 60 })).toEqual({
++			command: "x",
++			lifecycle: "lazy",
++			idleTimeout: 60,
++		});
++	});
++
++	it("starts no process until mcp_connect, then exposes and reuses native tools", async () => {
++		const h = await extension();
++		expect(h.events()).toEqual([]);
++		expect(h.tools.has("mcp__lazy__echo")).toBe(false);
++		expect(h.tools.get("mcp_connect")?.description).toContain("lazy");
++		await h.handlers.get("before_agent_start")?.({ systemPromptOptions: { sections: {} } }, h.ctx);
++		await h.call("mcp_connect", { server: "lazy" });
++		expect(h.events().filter((event) => event === "start")).toHaveLength(1);
++		expect(h.tools.has("mcp__lazy__echo")).toBe(true);
++		await h.call("mcp__lazy__echo");
++		await h.call("mcp__lazy__echo");
++		expect(h.events().filter((event) => event === "tools/call")).toHaveLength(2);
++		expect(h.events().filter((event) => event === "start")).toHaveLength(1);
++		await expect(h.call("mcp_connect", { server: "missing" })).rejects.toThrow("No enabled lazy");
++	});
++
++	it("coalesces cold connections, protects concurrent tools and resources, retains schemas across idle close", async () => {
++		const h = runtime();
++		expect(h.connection.state).toBe("idle");
++		expect(h.events()).toEqual([]);
++		await Promise.all([h.connection.callTool("echo", {}, {}), h.connection.callTool("echo", {}, {})]);
++		expect(h.events().filter((event) => event === "start")).toHaveLength(1);
++		const schemas = h.connection.tools;
++		jest.useFakeTimers();
++		const held = h.connection.callTool("hold", {}, {});
++		await observed(h.log, "held");
++		await Promise.all([
++			h.connection.callTool("echo", {}, {}),
++			h.connection.readResource("test://doc", {}),
++			h.connection.allResources({}),
++			h.connection.allResourceTemplates({}),
++			h.connection.resourcesPage(undefined, {}),
++			h.connection.resourceTemplatesPage(undefined, {}),
++		]);
++		jest.advanceTimersByTime(1001);
++		expect(h.events()).not.toContain("stop");
++		expect(h.connection.state).toBe("connected");
++		await h.connection.callTool("release", {}, {});
++		await held;
++		const idle = h.idle();
++		jest.advanceTimersByTime(1000);
++		await idle;
++		expect(h.events()).toContain("stop");
++		expect(h.connection.tools).toBe(schemas);
++		expect(h.connection.hasResources).toBe(true);
++		await h.connection.callTool("echo", {}, {});
++		expect(h.events().filter((event) => event === "start")).toHaveLength(2);
++		await h.connection.close();
++		expect(h.events().filter((event) => event === "stop")).toHaveLength(2);
++		expect(h.connection.state).toBe("closed");
++		await expect(h.connection.callTool("echo", {}, {})).rejects.toThrow("shut down");
++	});
++
++	for (const stall of ["initialize", "tools/list"]) {
++		it(`actively closes bootstrap stalled during ${stall}`, async () => {
++			const h = runtime(stall);
++			const opening = h.connection.getClient().catch((error: unknown) => error);
++			await h.stalled;
++			const started = performance.now();
++			await Promise.all([h.connection.close(), h.connection.close()]);
++			expect(performance.now() - started).toBeLessThan(2000);
++			expect(await opening).toBeInstanceOf(Error);
++			expect(h.connection.state).toBe("closed");
++			expect(h.events()).toContain("stop");
++			expect(h.connection.tools).toEqual([]);
++		}, 5000);
++	}
++
++	it("queues new requests behind an idle close and coalesces their reconnect", async () => {
++		const h = runtime();
++		await h.connection.getClient();
++		jest.useFakeTimers();
++		await h.connection.callTool("echo", {}, {});
++		jest.advanceTimersByTime(1000);
++		const results = await Promise.all([h.connection.callTool("echo", {}, {}), h.connection.callTool("echo", {}, {})]);
++		expect(results).toHaveLength(2);
++		expect(h.events().filter((event) => event === "start")).toHaveLength(2);
++		expect(h.events().filter((event) => event === "stop")).toHaveLength(1);
++		expect(h.connection.state).toBe("connected");
++	});
++
++	it("retained native definitions reconnect after idle and explicit reconnect remains available", async () => {
++		const h = await extension();
++		await h.call("mcp_connect", { server: "lazy" });
++		const echo = h.tools.get("mcp__lazy__echo")!;
++		jest.useFakeTimers();
++		await h.call("mcp__lazy__echo");
++		jest.advanceTimersByTime(1000);
++		await observed(h.log, "stop");
++		await echo.execute("test", {}, undefined, undefined, h.ctx);
++		expect(h.events().filter((event) => event === "start")).toHaveLength(2);
++		await h.commands.get("mcp").handler("reconnect lazy", h.ctx);
++		expect(h.events().filter((event) => event === "start")).toHaveLength(3);
++	});
++
++	it("preserves eager startup and zero idle timeout", async () => {
++		const h = await extension({ lifecycle: "eager", idleTimeout: 0 });
++		expect(h.events()).toContain("start");
++		expect(h.tools.has("mcp_connect")).toBe(false);
++		jest.useFakeTimers();
++		await h.call("mcp__lazy__echo");
++		jest.advanceTimersByTime(60000);
++		expect(h.events()).not.toContain("stop");
++	});
++
++	it("reports cold activation failure without starting eagerly and cleans up startup during shutdown", async () => {
++		const h = await extension({ command: join(tmpdir(), "pi-mcp-nonexistent-executable"), args: [] });
++		expect(h.events()).toEqual([]);
++		await expect(h.call("mcp_connect", { server: "lazy" })).rejects.toThrow("failed to connect");
++		expect(h.tools.has("mcp__lazy__echo")).toBe(false);
++		const pending = runtime();
++		const opening = pending.connection.getClient();
++		const closing = pending.connection.close();
++		await expect(opening).rejects.toThrow("shut down");
++		await closing;
++		expect(pending.connection.state).toBe("closed");
++		expect(pending.events()).toContain("stop");
++	});
++});
+--- /dev/null
++++ b/packages/coding-agent/test/fixtures/mcp-lazy-server.mjs
+@@ -0,0 +1,54 @@
++import { appendFileSync } from "node:fs";
++import { createInterface } from "node:readline";
++
++const record = (event) => appendFileSync(process.argv[2], `${event}\n`);
++const reply = (id, result) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
++record("start");
++let held;
++const input = createInterface({ input: process.stdin });
++input.on("line", (line) => {
++	const message = JSON.parse(line);
++	if (message.id === undefined) return;
++	record(message.method);
++	if (message.method === process.argv[3]) {
++		record("stalled");
++		process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/lazy/stalled" })}\n`);
++		return;
++	}
++	if (message.method === "initialize") {
++		reply(message.id, {
++			protocolVersion: message.params.protocolVersion,
++			capabilities: { tools: {}, resources: {} },
++			serverInfo: { name: "lazy-test", version: "1" },
++		});
++	} else if (message.method === "tools/list") {
++		reply(message.id, {
++			tools: [
++				{ name: "echo", inputSchema: { type: "object" } },
++				{ name: "hold", inputSchema: { type: "object" } },
++				{ name: "release", inputSchema: { type: "object" } },
++			],
++		});
++	} else if (message.method === "resources/list") {
++		reply(message.id, { resources: [{ name: "doc", uri: "test://doc" }] });
++	} else if (message.method === "resources/templates/list") {
++		reply(message.id, { resourceTemplates: [] });
++	} else if (message.method === "resources/read") {
++		reply(message.id, { contents: [{ uri: message.params.uri, text: "resource" }] });
++	} else if (message.method === "tools/call") {
++		if (message.params.name === "hold") {
++			held = message.id;
++			record("held");
++			return;
++		}
++		if (message.params.name === "release" && held !== undefined) {
++			reply(held, { content: [{ type: "text", text: "released" }] });
++			held = undefined;
++		}
++		reply(message.id, { content: [{ type: "text", text: "ok" }] });
++	}
++});
++input.on("close", () => {
++	record("stop");
++	process.exit(0);
++});
