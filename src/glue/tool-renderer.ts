@@ -8,8 +8,6 @@ import { Container, Text } from "@earendil-works/pi-tui";
 import type { AnyToolDefinition, ToolTracker } from "../tool-tracker.js";
 import { importUpstream } from "../upstream.js";
 
-const BATCH_VALIDATION_PREFIX = 'Validation failed for tool "tool_batch":';
-
 const LSP_TOOL_NAMES = [
 	// keep-sorted start
 	"lsp_definition",
@@ -63,60 +61,6 @@ export function latestDiagnosticsResult(
 		return [{ ...item, text: normalizeDiagnosticsText(item.text) }];
 	}
 	return content;
-}
-
-export function batchValidationText(raw: string): string | undefined {
-	if (!raw.startsWith(BATCH_VALIDATION_PREFIX)) return;
-	const issue = raw
-		.match(/\n\s*-\s*(.+?)\n\nReceived arguments:/s)?.[1]
-		?.trim();
-	const callIndex = issue?.match(/^calls\.(\d+)\.tool:/)?.[1];
-	const argumentsText = raw.split("\n\nReceived arguments:\n", 2)[1];
-	if (callIndex !== undefined && argumentsText) {
-		try {
-			const args = JSON.parse(argumentsText) as {
-				calls?: Array<{ name?: unknown; tool?: unknown }>;
-			};
-			const call = args.calls?.[Number(callIndex)];
-			const tool = call?.tool ?? call?.name;
-			if (typeof tool === "string") {
-				return `Call ${Number(callIndex) + 1} uses unsupported tool ${tool}.\nAllowed tools: read, grep, find, ls, bash.`;
-			}
-		} catch {
-			// Fall back to the concise validator message below.
-		}
-	}
-	return issue ?? "Invalid batch arguments.";
-}
-
-function compactBatchValidation(
-	definition: AnyToolDefinition,
-): AnyToolDefinition {
-	return {
-		...definition,
-		renderResult(result, options, theme, context) {
-			const firstText = result.content.find((part) => part.type === "text");
-			if (
-				!firstText?.text.startsWith(BATCH_VALIDATION_PREFIX) &&
-				definition.renderResult
-			) {
-				return definition.renderResult(result, options, theme, context);
-			}
-
-			const raw = resultText(result);
-			const validation = batchValidationText(raw);
-			if (!validation) return new Text(raw || "no output", 0, 0);
-			const [problem, allowed] = validation.split("\n", 2);
-			return new Text(
-				`${theme.fg("error", "● ")}${theme.fg("text", theme.bold("Tool Batch"))}${theme.fg("error", " · validation failed")}\n${theme.fg(
-					"toolOutput",
-					theme.bold(problem ?? validation),
-				)}${allowed ? `\n${theme.fg("muted", allowed)}` : ""}`,
-				0,
-				0,
-			);
-		},
-	};
 }
 
 const COLLAPSED_LSP_RESULT_LINES = 4;
@@ -318,7 +262,8 @@ export default async function toolRendererAdapter(
 		["grep", "find"].map((name) => [name, tracker.get(name)] as const),
 	);
 
-	const unblock = tracker.block(new Set(["grep", "find"]));
+	// FFF owns search; native codemode owns batching.
+	const unblock = tracker.block(new Set(["grep", "find", "tool_batch"]));
 	try {
 		const toolRenderer = await importUpstream(
 			"@vanillagreen/pi-tool-renderer/extensions/tool-renderer.js",
@@ -329,6 +274,13 @@ export default async function toolRendererAdapter(
 	}
 
 	const agent = await importUpstream("@earendil-works/pi-coding-agent");
+	// The upstream renderer forwards native results but drops their output schema.
+	// Preserve bash's structured value for codemode without changing its chrome.
+	const bash = tracker.get("bash");
+	const nativeBash = agent.createBashTool(process.cwd());
+	if (bash && nativeBash.outputSchema)
+		pi.registerTool({ ...bash, outputSchema: nativeBash.outputSchema });
+
 	const messageRenderer = await importUpstream(
 		"@vanillagreen/pi-tool-renderer/extensions/tool-renderer/messages.js",
 	);
@@ -349,23 +301,12 @@ export default async function toolRendererAdapter(
 		if (definition) pi.registerTool(definition);
 	}
 
-	// Pi 0.84.2's public declarations omit ToolResultEventResult, which
-	// removes this valid overload from consumers under skipLibCheck.
-	const onToolResult = pi.on.bind(pi) as unknown as (
-		event: "tool_result",
-		handler: (
-			event: ToolResultEvent,
-		) => { content: ToolResultEvent["content"] } | void,
-	) => void;
-	onToolResult("tool_result", (event) => {
+	pi.on("tool_result", (event) => {
 		if (event.toolName !== "lsp_diagnostics") return;
 		const content = latestDiagnosticsResult(event.content);
 		if (content === event.content) return;
 		return { content };
 	});
-
-	const batch = tracker.get("tool_batch");
-	if (batch) pi.registerTool(compactBatchValidation(batch));
 
 	pi.registerMessageRenderer(
 		"pi-lsp-diagnostics",

@@ -1,32 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /**
- * Weak models (glm, deepseek, ...) batch once under instruction pressure and
- * then decay back into one call per assistant message. Prompt-only nudges are
- * not enough, so the pattern gets blocked instead:
- *
- * - chained bash: `;`, `&&`, `||`, or a newline in a bash command, whether the
- *   command is a solo call or an entry inside a tool_batch. Several commands
- *   belong in separate tool_batch entries, not glued into one shell line. The
- *   nudge carries the rewritten tool_batch call so the model can copy it.
- * - serial probing: a solo read/grep/find/ls/bash call right after another solo
- *   call of the same tool. Same tool only: a grep -> read chain is usually
- *   dependent on the previous result.
- * - separate parallel probes: two or more read/grep/find/ls/bash calls in one
- *   message. They run, but as separate entries: one tool_batch call renders as
- *   a single stack and shares the aggregate output cap.
- *
- * Every such call is blocked, except calls in the message that directly
- * follows a blocked one: that is the re-issue, and letting it run is what keeps
- * the model from looping on the nudge instead of making progress. Chained bash
- * is the exception: a chained call is never a legitimate single probe, so the
- * re-issue exemption does not apply and it is blocked again until the model
- * either splits it or hits the escape hatch (same command blocked
- * MAX_CHAINED_BLOCKS times). A tool_batch call, a non-probe tool, or a user
- * turn ends the run.
+ * Weak models drift back to serial probes despite prompt instructions. Allow
+ * re-issues so dependent lookups can progress, but nudge independent calls into
+ * codemode. Nested calls bypass serial detection; their bash chains still go
+ * through the same bounded blocking policy as direct calls.
  */
 const NUDGE_REASON =
-	"Serial or separate probing blocked. Put the independent read/grep/find/ls/bash calls in ONE tool_batch call with {tool, args} entries instead of one call per message. If this call depends on the previous result, re-issue it unchanged and it will run.";
+	"Serial or separate probing blocked. Put independent read/grep/find/ls/bash calls in ONE codemode script: text(await Promise.allSettled([tools.read({path: 'a'}), tools.read({path: 'b'})])). Use tools.<name>(args), not separate tool calls. If this call depends on the previous result, re-issue it unchanged and it will run.";
 
 const PROBE_TOOLS = new Set([
 	// keep-sorted start
@@ -37,8 +18,6 @@ const PROBE_TOOLS = new Set([
 	"read",
 	// keep-sorted end
 ]);
-
-const BATCH_TOOL = "tool_batch";
 
 /** Blocked entry ids are remembered only to let the next call through. */
 const MAX_REMEMBERED_BLOCKS = 500;
@@ -84,29 +63,16 @@ function toolCalls(message: SessionEntryLike["message"]): ToolCallContent[] {
 	);
 }
 
-function batchSize(call: ToolCallContent): number {
-	const input = call.arguments;
-	if (typeof input !== "object" || input === null) return 0;
-	const calls = (input as { calls?: unknown }).calls;
-	return Array.isArray(calls) ? calls.length : 0;
-}
-
 function classify(message: SessionEntryLike["message"]): Classification {
 	const calls = toolCalls(message);
 	if (calls.length === 0) return { kind: "skip" };
 	if (calls.length > 1) {
-		// Several probe calls in one message run concurrently, so they are not
-		// serial probing; they are still nudged into a real tool_batch call.
+		// One script keeps independent probe output together.
 		return calls.every((call) => PROBE_TOOLS.has(call.name))
 			? { kind: "separate" }
 			: { kind: "batched" };
 	}
 	const [call] = calls;
-	// A batch of one is a solo call in disguise, and a batch with no usable
-	// entries batches nothing: neither ends a serial run.
-	if (call.name === BATCH_TOOL) {
-		return batchSize(call) > 1 ? { kind: "batched" } : { kind: "skip" };
-	}
 	return PROBE_TOOLS.has(call.name)
 		? { kind: "probe", tool: call.name }
 		: { kind: "batched" };
@@ -162,30 +128,11 @@ function chainSegments(command: string): string[] {
 	return segments.map((segment) => segment.trim()).filter(Boolean);
 }
 
-/**
- * The bash commands a call would run. A tool_batch entry's arguments may sit
- * under `args`, `arguments`, or flat on the entry, matching the batch tool's
- * own normalization.
- */
 function bashCommands(toolName: string, input: unknown): string[] {
-	if (typeof input !== "object" || input === null) return [];
-	const record = input as Record<string, unknown>;
-	if (toolName === "bash") {
-		return typeof record.command === "string" ? [record.command] : [];
-	}
-	if (toolName !== BATCH_TOOL || !Array.isArray(record.calls)) return [];
-	const commands: string[] = [];
-	for (const raw of record.calls) {
-		if (typeof raw !== "object" || raw === null) continue;
-		const entry = raw as Record<string, unknown>;
-		if ((entry.tool ?? entry.name) !== "bash") continue;
-		const args = (entry.args ?? entry.arguments ?? entry) as Record<
-			string,
-			unknown
-		>;
-		if (typeof args.command === "string") commands.push(args.command);
-	}
-	return commands;
+	if (toolName !== "bash" || typeof input !== "object" || input === null)
+		return [];
+	const { command } = input as Record<string, unknown>;
+	return typeof command === "string" ? [command] : [];
 }
 
 /** Chained commands in the call, one segment list per offending command. */
@@ -205,10 +152,12 @@ function chainedReason(chains: string[][]): string {
 	const calls = chains
 		.flat()
 		.slice(0, MAX_REASON_SEGMENTS)
-		.map((segment) => ({ tool: "bash", args: { command: clip(segment) } }));
+		.map(
+			(segment) => `tools.bash(${JSON.stringify({ command: clip(segment) })})`,
+		);
 	return [
-		"Chained bash blocked: one bash entry runs one command, never ; or && / || or newlines. Split it into one tool_batch entry per command, for example:",
-		`tool_batch(${JSON.stringify({ calls })})`,
+		"Chained bash blocked: one bash call runs one command, never ; or && / || or newlines. For independent probes, use this codemode script; keep dependent or mutating calls sequential:",
+		`text(await Promise.allSettled([${calls.join(", ")}]))`,
 	].join("\n");
 }
 
@@ -238,6 +187,10 @@ export default function batchNudge(pi: ExtensionAPI): void {
 
 	pi.on("tool_call", (event, ctx) => {
 		const entries = ctx.sessionManager.getBranch() as SessionEntryLike[];
+		// Nested calls are absent from the transcript; their root call owns the turn.
+		const rootCallId = event.parentToolCallId
+			? event.parentToolCallId.split("/")[0]
+			: event.toolCallId;
 
 		// sessionManager is synchronized through the current assistant message
 		// before tool_call handlers run.
@@ -245,9 +198,7 @@ export default function batchNudge(pi: ExtensionAPI): void {
 		for (let index = entries.length - 1; index >= 0; index--) {
 			const entry = entries[index];
 			if (!isAssistant(entry)) continue;
-			if (
-				!toolCalls(entry.message).some((call) => call.id === event.toolCallId)
-			)
+			if (!toolCalls(entry.message).some((call) => call.id === rootCallId))
 				continue;
 			currentIndex = index;
 			break;
@@ -275,8 +226,10 @@ export default function batchNudge(pi: ExtensionAPI): void {
 			return { block: true, reason: chainedReason(chains) };
 		}
 
+		if (event.parentToolCallId) return;
+
 		const current = classify(entries[currentIndex].message);
-		// Already batching with tool_batch, or not a probe at all.
+		// Scripts and non-probe tools end the serial run.
 		if (current.kind === "batched" || current.kind === "skip") return;
 
 		// Only the closest earlier entry that did something decides. Skip entries

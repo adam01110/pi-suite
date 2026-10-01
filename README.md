@@ -43,8 +43,10 @@ environment variables, and operating-system services.
 
 ## Usage
 
-The package exposes `src/index.ts` as its Pi extension entrypoint. I build it
-with Nix and load the resulting package through Pi's `settings.packages` option.
+The package requires Pi 0.99 or newer and exposes `src/index.ts` as its Pi
+extension entrypoint. I build it with Nix and load the resulting package through
+Pi's `settings.packages` option. MCP and `codemode` use Pi's built-in support;
+enable `codemode` for probe batching with `"defaultTools": ["+codemode"]`.
 
 Build the package with:
 
@@ -69,7 +71,7 @@ The suite currently combines:
 | --- | --- |
 | Interface | Regular bottom anchor, QOL, header, footer, cache status, cache optimizer, Atuin, fast resume |
 | Workflow | Goal, BTW, cwd, FFF, autoformat, rewind, subagents |
-| Tools | ask-user, CC Safety Net, computer use, LSP, MCP, RTK, web access |
+| Tools | ask-user, CC Safety Net, computer use, LSP, RTK, web access |
 | Rendering | autoformat and shared tool-renderer adapters |
 
 The actual extension behavior primarily belongs to the dependencies in

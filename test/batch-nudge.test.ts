@@ -2,12 +2,18 @@ import { describe, expect, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import batchNudge from "../src/glue/batch-nudge.js";
 
-type ToolCall = { args?: Record<string, unknown>; id: string; name: string };
+type ToolCall = {
+	args?: Record<string, unknown>;
+	id: string;
+	name: string;
+	parentToolCallId?: string;
+};
 type Result = { block: boolean; reason: string } | undefined;
 
 type ToolCallHandler = (
 	event: {
 		input?: Record<string, unknown>;
+		parentToolCallId?: string;
 		toolCallId: string;
 		toolName: string;
 	},
@@ -55,6 +61,7 @@ function setup(): Harness {
 		handler(
 			{
 				toolCallId: call.id,
+				parentToolCallId: call.parentToolCallId,
 				toolName: call.name,
 				input: call.args ?? {},
 			},
@@ -83,7 +90,8 @@ describe("batch nudge", () => {
 		h.entry("assistant", solo("read", "r2"));
 		const result = h.block({ id: "r2", name: "read" });
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toContain("tool_batch");
+		expect(result?.reason).toContain("codemode");
+		expect(result?.reason).toContain("text(await Promise.allSettled");
 	});
 
 	test("blocks serial bash probes", () => {
@@ -106,7 +114,9 @@ describe("batch nudge", () => {
 		h.entry("assistant", solo("bash", "b1", args));
 		const result = h.block({ id: "b1", name: "bash", args });
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toContain("tool_batch(");
+		expect(result?.reason).toContain(
+			"text(await Promise.allSettled([tools.bash(",
+		);
 		expect(result?.reason).toContain('"command":"ls src"');
 	});
 
@@ -167,45 +177,57 @@ describe("batch nudge", () => {
 		expect(h.block({ id: "b1", name: "bash", args })).toBeUndefined();
 	});
 
-	test("blocks chained bash nested in a tool_batch entry", () => {
+	test("blocks chained bash nested in codemode without parsing the script", () => {
 		const h = setup();
 		h.entry("user");
-		const args = {
-			calls: [
-				{ tool: "bash", args: { command: "ls && pwd" } },
-				{ tool: "read", args: { path: "a" } },
-			],
-		};
-		h.entry("assistant", solo("tool_batch", "tb1", args));
-		const result = h.block({ id: "tb1", name: "tool_batch", args });
+		h.entry("assistant", solo("codemode", "cm1", { code: "dynamic script" }));
+		const result = h.block({
+			id: "cm1/1",
+			parentToolCallId: "cm1",
+			name: "bash",
+			args: { command: "ls && pwd" },
+		});
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toContain('"command":"ls"');
+		expect(result?.reason).toContain('tools.bash({"command":"ls"})');
 	});
 
-	test("blocks flat and aliased tool_batch entries with chains", () => {
+	test("blocks chained bash at deeper nesting levels", () => {
 		const h = setup();
 		h.entry("user");
-		const args = {
-			calls: [
-				{ name: "bash", command: "ls; pwd" },
-				{ tool: "bash", arguments: { command: "pwd || ls" } },
-			],
-		};
-		h.entry("assistant", solo("tool_batch", "tb1", args));
-		expect(h.block({ id: "tb1", name: "tool_batch", args })?.block).toBe(true);
+		h.entry("assistant", solo("codemode", "cm1"));
+		expect(
+			h.block({
+				id: "cm1/1/1",
+				parentToolCallId: "cm1/1",
+				name: "bash",
+				args: { command: "pwd || ls" },
+			})?.block,
+		).toBe(true);
 	});
 
-	test("allows a tool_batch whose bash entries are single commands", () => {
+	test("allows single commands and sibling probes nested in codemode", () => {
 		const h = setup();
 		h.entry("user");
-		const args = {
-			calls: [
-				{ tool: "bash", args: { command: "ls" } },
-				{ tool: "bash", args: { command: "pwd" } },
-			],
-		};
-		h.entry("assistant", solo("tool_batch", "tb1", args));
-		expect(h.block({ id: "tb1", name: "tool_batch", args })).toBeUndefined();
+		h.entry("assistant", solo("read", "r1"));
+		h.entry("assistant", solo("codemode", "cm1"));
+		for (const command of ["ls", "pwd"]) {
+			expect(
+				h.block({
+					id: `cm1/${command}`,
+					parentToolCallId: "cm1",
+					name: "bash",
+					args: { command },
+				}),
+			).toBeUndefined();
+		}
+		expect(
+			h.block({
+				id: "cm1/3",
+				parentToolCallId: "cm1",
+				name: "read",
+				args: { path: "a" },
+			}),
+		).toBeUndefined();
 	});
 
 	test("allows a single bash command with no chain", () => {
@@ -295,43 +317,39 @@ describe("batch nudge", () => {
 		).toBeUndefined();
 	});
 
-	test("treats a two-entry tool_batch as batching and resets the run", () => {
+	test("treats codemode as batching and resets the run", () => {
 		const h = setup();
 		h.entry("user");
 		h.entry("assistant", solo("read", "r1"));
 		h.entry("assistant", [
 			{
-				id: "tb1",
-				name: "tool_batch",
+				id: "cm1",
+				name: "codemode",
 				args: {
-					calls: [
-						{ tool: "read", args: { path: "a" } },
-						{ tool: "grep", args: { pattern: "b" } },
-					],
+					code: 'text(await Promise.allSettled([tools.read({path: "a"}), tools.grep({pattern: "b"})]))',
 				},
 			},
 		]);
-		expect(h.block({ id: "tb1", name: "tool_batch" })).toBeUndefined();
+		expect(h.block({ id: "cm1", name: "codemode" })).toBeUndefined();
 		h.entry("assistant", solo("read", "r4"));
 		expect(h.block({ id: "r4", name: "read" })).toBeUndefined();
 		h.entry("assistant", solo("read", "r5"));
 		expect(h.block({ id: "r5", name: "read" })?.block).toBe(true);
 	});
 
-	test("does not count a one-entry tool_batch as batching", () => {
+	test("does not inspect arbitrary codemode source for probe counts", () => {
 		const h = setup();
 		h.entry("user");
 		h.entry("assistant", solo("read", "r1"));
-		h.entry("assistant", [
-			{
-				id: "tb1",
-				name: "tool_batch",
-				args: { calls: [{ tool: "read", args: { path: "a" } }] },
-			},
-		]);
-		expect(h.block({ id: "tb1", name: "tool_batch" })).toBeUndefined();
+		h.entry(
+			"assistant",
+			solo("codemode", "cm1", {
+				code: 'const f = tools.read; text(await f({path: "a"}))',
+			}),
+		);
+		expect(h.block({ id: "cm1", name: "codemode" })).toBeUndefined();
 		h.entry("assistant", solo("read", "r2"));
-		expect(h.block({ id: "r2", name: "read" })?.block).toBe(true);
+		expect(h.block({ id: "r2", name: "read" })).toBeUndefined();
 	});
 
 	test("allows solo calls of non-probe tools and resets the run", () => {

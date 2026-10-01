@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-	batchValidationText,
 	collapsedLspResult,
 	diagnosticsDisplayText,
 	installSessionSafeUserMessageRenderer,
@@ -85,31 +84,6 @@ describe("LSP result truncation", () => {
 			text: fiveLines,
 			more: 0,
 		});
-	});
-});
-
-describe("tool batch validation renderer compatibility", () => {
-	test("summarizes an unsupported inner tool without repeating arguments", () => {
-		const raw = `Validation failed for tool "tool_batch":
-  - calls.3.tool: must be equal to one of the allowed values
-
-Received arguments:
-${JSON.stringify(
-	{
-		calls: [
-			{ tool: "find" },
-			{ tool: "find" },
-			{ tool: "bash" },
-			{ tool: "lsp_diagnostics" },
-		],
-	},
-	null,
-	2,
-)}`;
-
-		expect(batchValidationText(raw)).toBe(
-			"Call 4 uses unsupported tool lsp_diagnostics.\nAllowed tools: read, grep, find, ls, bash.",
-		);
 	});
 });
 

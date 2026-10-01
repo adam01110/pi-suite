@@ -34,7 +34,10 @@ function definition(
 
 test("description trims rewrite registered tools at before_agent_start", () => {
 	const upstream = definition("SubagentWorkflow", "long upstream description");
-	const proxy = definition("mcp__context7", "long proxy description");
+	const proxy = definition(
+		"mcp__context7__query_docs",
+		"Native MCP documentation tool",
+	);
 	const untouched = definition("some-tool", "long upstream description");
 
 	const registered: ToolDefinition<any>[] = [];
@@ -65,10 +68,8 @@ test("description trims rewrite registered tools at before_agent_start", () => {
 
 	const proxyTrim = [...registered]
 		.reverse()
-		.find((tool) => tool.name === "mcp__context7");
-	expect(proxyTrim?.description).toBe(
-		'Namespace proxy for MCP server "context7". Forwards {tool, args} to it.',
-	);
+		.find((tool) => tool.name === "mcp__context7__query_docs");
+	expect(proxyTrim).toBe(proxy);
 
 	expect(
 		[...registered].reverse().find((tool) => tool.name === "some-tool"),

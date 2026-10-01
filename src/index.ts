@@ -48,7 +48,6 @@ const BLOCKED_COMMANDS = {
 		"htg",
 		"hv",
 	]),
-	mcp: new Set(["mcp-auth", "pi-mcp"]),
 	qol: new Set([
 		"context",
 		"qol",
@@ -180,14 +179,6 @@ export default async function piSuite(pi: ExtensionAPI): Promise<void> {
 			factory: suppressNotifications(
 				upstreamFactory("@agent-sh/computer-use-linux/pi/extension/index.js"),
 				IGNORED_NOTIFICATION_PREFIXES.computerUse,
-			),
-			optional: true,
-		},
-		{
-			id: "mcp",
-			factory: suppressCommands(
-				upstreamFactory("pi-mcp-adapter"),
-				BLOCKED_COMMANDS.mcp,
 			),
 			optional: true,
 		},
