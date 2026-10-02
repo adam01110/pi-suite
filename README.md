@@ -70,6 +70,15 @@ Build the package with:
 nix build .#pi-suite
 ```
 
+The Nix package exposes `result/bin/computer-use-linux`; pass `mcp` for a
+stdio MCP server or `doctor` for diagnostics. Both this launcher and the bundled
+npm binary include GLib's `gdbus`/`gsettings`, GNOME settings schemas, and common
+system/process tools in their runtime environment. Host PATH remains available
+for compositor and input tools such as `hyprctl` and `ydotool`. Packaging does
+not install or enable the AT-SPI service, portals, or input daemons; these remain
+host configuration. `nix flake check` verifies accessibility probes can launch
+without host PATH, not that a desktop service is running.
+
 Disable individual modules with a comma-separated environment variable:
 
 ```bash

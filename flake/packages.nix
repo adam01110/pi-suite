@@ -7,7 +7,9 @@ _: {
       buildNpmPackage
       fetchurl
       lib
+      makeWrapper
       patch
+      runCommand
       stdenv
       # keep-sorted end
       ;
@@ -39,6 +41,16 @@ _: {
 
     computerUseBinary = fetchComputerUse "computer-use-linux" computerUseTarget.binaryHash;
     computerUseCosmic = fetchComputerUse "computer-use-linux-cosmic" computerUseTarget.cosmicHash;
+
+    computerUseRuntimePath = lib.makeBinPath [
+      # keep-sorted start
+      pkgs.coreutils
+      pkgs.glib
+      pkgs.procps
+      pkgs.systemd
+      # keep-sorted end
+    ];
+    computerUseSchemaPath = "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}";
 
     # Native prebuilds for platforms and ABIs this host cannot load.
     foreignPrebuildPatterns =
@@ -76,7 +88,12 @@ _: {
         "--legacy-peer-deps"
         "--omit=dev"
       ];
-      nativeBuildInputs = [autoPatchelfHook];
+      nativeBuildInputs = [
+        # keep-sorted start
+        autoPatchelfHook
+        makeWrapper
+        # keep-sorted end
+      ];
       buildInputs = with pkgs; [
         # keep-sorted start
         stdenv.cc.cc.lib
@@ -141,14 +158,24 @@ _: {
         runHook postInstall
       '';
 
-      # Runs after the stdenv fixup phase, which repoints shebangs back at the
-      # build nodejs. Rewriting them here keeps nodejs out of the runtime closure.
       postFixup = ''
+        # Wrap the npm entrypoint too; native Pi calls bypass $out/bin.
+        computerUseDir="$out/node_modules/@agent-sh/computer-use-linux/npm/bin"
+        wrapProgram "$computerUseDir/computer-use-linux-linux-${computerUseTarget.nodeArch}" --prefix PATH : ${computerUseRuntimePath} --prefix XDG_DATA_DIRS : ${computerUseSchemaPath} --set-default COMPUTER_USE_LINUX_COSMIC_HELPER "$computerUseDir/computer-use-linux-cosmic"
+        mkdir -p "$out/bin"
+        ln -s "$computerUseDir/computer-use-linux-linux-${computerUseTarget.nodeArch}" "$out/bin/computer-use-linux"
+
+        # Drop build-nodejs references after stdenv rewrites shebangs.
         grep -rl --binary-files=without-match -E '^#!.*/node$' "$out/node_modules" \
           | xargs -r sed -i '1s|^#!.*|#!/usr/bin/env node|'
       '';
     };
   in {
+    checks.computer-use-runtime = runCommand "computer-use-runtime" {} ''
+      ${pkgs.nodejs}/bin/node ${../test/computer-use-runtime.mjs} ${piSuite}/bin/computer-use-linux ${piSuite}/node_modules/@agent-sh/computer-use-linux/npm/bin/computer-use-linux-linux-${computerUseTarget.nodeArch}
+      touch "$out"
+    '';
+
     packages = {
       default = piSuite;
       pi-suite = piSuite;
