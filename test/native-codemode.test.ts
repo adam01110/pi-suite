@@ -60,7 +60,7 @@ test("native codemode batches rendered probes without the adapter", async () => 
 		}));
 		await session.bindExtensions({});
 		const names = session.getAllTools().map((tool) => tool.name);
-		expect(names).not.toContain("tool_batch");
+		expect(names).toContain("tool_batch");
 		expect(names).not.toContain("mcpScript");
 		expect(names).not.toContain("mcp");
 		expect(session.getActiveToolNames()).toContain("computer_use_linux_tools");
@@ -120,7 +120,7 @@ text(await describeTool("bash"));
 		expect(output).toContain('"exit_code":0');
 		expect(output).toContain('"status":"rejected"');
 		console.log(
-			"Native Pi codemode: Script completed; rendered reads, structured bash, allSettled failure, discovery; computer-use loader active without adapter",
+			"Native Pi codemode: Script completed; rendered reads, structured bash, allSettled failure, discovery; computer-use loader active without adapter; tool_batch registered",
 		);
 	} finally {
 		session?.dispose();

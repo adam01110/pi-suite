@@ -3,11 +3,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 /**
  * Weak models drift back to serial probes despite prompt instructions. Allow
  * re-issues so dependent lookups can progress, but nudge independent calls into
- * codemode. Nested calls bypass serial detection; their bash chains still go
- * through the same bounded blocking policy as direct calls.
+ * one `tool_batch` call. Nested calls bypass serial detection; their bash chains
+ * still go through the same bounded blocking policy as direct calls.
  */
 const NUDGE_REASON =
-	"Serial or separate probing blocked. Put independent read/grep/find/ls/bash calls in ONE codemode script: text(await Promise.allSettled([tools.read({path: 'a'}), tools.read({path: 'b'})])). Use tools.<name>(args), not separate tool calls. If this call depends on the previous result, re-issue it unchanged and it will run.";
+	'Serial or separate probing blocked. Put independent read/grep/find/ls/bash calls in ONE tool_batch call: {"calls": [{"tool": "read", "args": {"path": "a"}}, {"tool": "grep", "args": {"pattern": "b"}}]}. Use codemode only for pipelines. If this call depends on the previous result, re-issue it unchanged and it will run.';
 
 const PROBE_TOOLS = new Set([
 	// keep-sorted start
@@ -153,11 +153,12 @@ function chainedReason(chains: string[][]): string {
 		.flat()
 		.slice(0, MAX_REASON_SEGMENTS)
 		.map(
-			(segment) => `tools.bash(${JSON.stringify({ command: clip(segment) })})`,
+			(segment) =>
+				`{"tool": "bash", "args": {"command": ${JSON.stringify(clip(segment))}}}`,
 		);
 	return [
-		"Chained bash blocked: one bash call runs one command, never ; or && / || or newlines. For independent probes, use this codemode script; keep dependent or mutating calls sequential:",
-		`text(await Promise.allSettled([${calls.join(", ")}]))`,
+		"Chained bash blocked: one bash call runs one command, never ; or && / || or newlines. For independent commands, use one tool_batch call; keep dependent or mutating calls sequential:",
+		`{"calls": [${calls.join(", ")}]}`,
 	].join("\n");
 }
 

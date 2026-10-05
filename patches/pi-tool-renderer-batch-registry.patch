@@ -1,0 +1,58 @@
+Patch @vanillagreen/pi-tool-renderer so the tool_batch tool runs its calls
+through the session's tool registry instead of the built-in tool constructors.
+
+The upstream batch builds read/grep/find/ls/bash from the pi agent module, so a
+batched grep or find bypasses the registered tool: with FFF in override mode a
+direct grep is FFF's, while the same grep inside a batch is pi's built-in. A
+batch that routes through ctx.executeTool runs one implementation, and the
+nested calls get the same argument validation, tool_call/tool_result hooks, and
+permission checks as model-issued calls. A context without executeTool keeps the
+built-in path.
+
+Applied by flake/packages.nix after npm install. To apply it to a development
+checkout, run from the repository root:
+
+  patch -p1 -d node_modules/@vanillagreen/pi-tool-renderer < patches/pi-tool-renderer-batch-registry.patch
+
+Upstream: github.com/vanillagreencom/kendex
+
+--- a/extensions/tool-renderer/batch.ts
++++ b/extensions/tool-renderer/batch.ts
+@@ -301,8 +301,6 @@
+ 				}
+ 				let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+ 				try {
+-					const original = getBuiltInTool(agent, effectiveCwd, call.tool);
+-					if (!original?.execute) throw new BatchCallError(batchMessages.unavailable(call.tool));
+ 					const timeoutPromise = new Promise<never>((_, reject) => {
+ 						timeoutHandle = setTimeout(() => {
+ 							// Reject the race promise BEFORE aborting so the timeout
+@@ -314,10 +312,24 @@
+ 							childController.abort();
+ 						}, batchCallTimeoutMs);
+ 					});
+-					const result = await Promise.race([
+-						original.execute(`${toolCallId}:${index}`, call.args, childController.signal, undefined),
+-						timeoutPromise,
+-					]);
++					// Prefer the session's tool registry so a batch runs the tools the
++					// model calls directly (FFF's grep/find) with normal validation,
++					// hooks, and permission checks. The built-in constructor stays as
++					// the fallback for a context that cannot execute tools.
++					const builtin = context?.executeTool
++						? undefined
++						: getBuiltInTool(agent, effectiveCwd, call.tool);
++					if (!context?.executeTool && !builtin?.execute)
++						throw new BatchCallError(batchMessages.unavailable(call.tool));
++					const result = context?.executeTool
++						? await Promise.race([
++								context.executeTool(call.tool, call.args, { signal: childController.signal }),
++								timeoutPromise,
++							])
++						: await Promise.race([
++								builtin.execute(`${toolCallId}:${index}`, call.args, childController.signal, undefined),
++								timeoutPromise,
++							]);
+ 					return {
+ 						args: call.args,
+ 						details: result?.details,

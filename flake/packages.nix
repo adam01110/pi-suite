@@ -118,6 +118,11 @@ _: {
         # the terminal scrollback every 450ms in regular mode.
         ${lib.getExe patch} --batch -p1 -d node_modules/@vanillagreen/pi-tool-renderer < ${../patches/pi-tool-renderer-pending-blink.patch}
 
+        # The batch tool builds read/grep/find/ls/bash from the pi agent module,
+        # so a batched grep or find would bypass the registered tools (FFF in
+        # override mode). Route batch calls through the session tool registry.
+        ${lib.getExe patch} --batch -p1 -d node_modules/@vanillagreen/pi-tool-renderer < ${../patches/pi-tool-renderer-batch-registry.patch}
+
         computerUseDir="node_modules/@agent-sh/computer-use-linux/npm/bin"
         install -Dm755 ${computerUseBinary} "$computerUseDir/computer-use-linux-linux-${computerUseTarget.nodeArch}"
         install -Dm755 ${computerUseCosmic} "$computerUseDir/computer-use-linux-cosmic"

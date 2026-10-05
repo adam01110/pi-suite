@@ -17,6 +17,13 @@ export const compactDescriptions: Readonly<Record<string, string>> = {
 	// keep-sorted end
 };
 
+// Pi's own codemode guideline says to batch every independent call into a
+// script. The suite wants independent probes in one tool_batch call and
+// codemode kept for pipelines, so the rule is replaced each turn.
+const CODEMODE_GUIDELINES = [
+	"Use codemode for pipelines: transform, filter, or chain one tool's output across further operations, including shell pipes. Independent probes go in one tool_batch call instead.",
+];
+
 // Schema property descriptions that document UI/env-var behavior the model
 // cannot act on. Stripping them keeps types and enums intact.
 const SLIM_SCHEMA_PROPERTIES: Readonly<Record<string, readonly string[]>> = {
@@ -80,5 +87,11 @@ export function installDescriptionTrims(
 	};
 
 	pi.on("session_start", pass);
-	pi.on("before_agent_start", pass);
+	pi.on("before_agent_start", (event) => {
+		pass();
+		// Pi ships codemode as the batching layer. The suite batches with one
+		// tool_batch call instead and keeps codemode for pipelines.
+		const guidelines = event.systemPromptOptions.toolGuidelines;
+		if (guidelines?.codemode) guidelines.codemode = [...CODEMODE_GUIDELINES];
+	});
 }

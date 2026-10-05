@@ -7,8 +7,18 @@ import { installDescriptionTrims } from "../src/tool-descriptions.js";
 import { trackToolRegistrations } from "../src/tool-tracker.js";
 
 interface FakePi extends ExtensionAPI {
-	handler: () => void;
+	handler: (event: BeforeAgentStartEvent) => void;
 	registered: ToolDefinition<any>[];
+}
+
+interface BeforeAgentStartEvent {
+	systemPromptOptions: { toolGuidelines: Record<string, string[]> };
+}
+
+function startEvent(
+	toolGuidelines: Record<string, string[]> = {},
+): BeforeAgentStartEvent {
+	return { systemPromptOptions: { toolGuidelines } };
 }
 
 function stripExecute(tool: ToolDefinition<any>) {
@@ -48,7 +58,7 @@ test("description trims rewrite registered tools at before_agent_start", () => {
 			registered.push(tool);
 		},
 		getAllTools: () => [upstream, proxy, untouched].map(stripExecute),
-		on(_event: string, handler: () => void) {
+		on(_event: string, handler: (event: BeforeAgentStartEvent) => void) {
 			pi.handler = handler;
 		},
 	} as unknown as FakePi;
@@ -58,7 +68,7 @@ test("description trims rewrite registered tools at before_agent_start", () => {
 	tools.restore();
 
 	installDescriptionTrims(pi as ExtensionAPI, tools);
-	pi.handler();
+	pi.handler(startEvent());
 
 	const workflow = [...registered]
 		.reverse()
@@ -101,7 +111,7 @@ test("description trims run once and slim ask_user schema properties", () => {
 			registered.push(tool);
 		},
 		getAllTools: () => [askUser].map(stripExecute),
-		on(_event: string, handler: () => void) {
+		on(_event: string, handler: (event: BeforeAgentStartEvent) => void) {
 			pi.handler = handler;
 		},
 	} as unknown as FakePi;
@@ -109,9 +119,9 @@ test("description trims run once and slim ask_user schema properties", () => {
 	pi.registerTool(askUser);
 
 	installDescriptionTrims(pi as ExtensionAPI, tools);
-	pi.handler();
+	pi.handler(startEvent());
 	const countAfterFirst = registered.length;
-	pi.handler();
+	pi.handler(startEvent());
 	expect(registered.length).toBe(countAfterFirst);
 
 	const slimmed = [...registered]
@@ -128,4 +138,35 @@ test("description trims run once and slim ask_user schema properties", () => {
 	expect(properties.displayMode.description).toBeUndefined();
 	expect(properties.commentToggleKey.description).toBeUndefined();
 	expect(slimmed?.execute).toBe(askUser.execute);
+});
+
+test("rewrites pi's codemode batching guideline", () => {
+	const registered: ToolDefinition<any>[] = [];
+	const pi = {
+		registered,
+		handler: () => {},
+		registerTool(tool: ToolDefinition<any>) {
+			registered.push(tool);
+		},
+		getAllTools: () => [],
+		on(_event: string, handler: (event: BeforeAgentStartEvent) => void) {
+			pi.handler = handler;
+		},
+	} as unknown as FakePi;
+	const tools = trackToolRegistrations(pi as ExtensionAPI);
+	installDescriptionTrims(pi as ExtensionAPI, tools);
+
+	const event = startEvent({
+		codemode: [
+			"Use codemode to batch independent tool calls (Promise.allSettled), chain them, or filter large output, instead of many separate calls.",
+		],
+		read: ["Read files"],
+	});
+	pi.handler(event);
+
+	const guidelines = event.systemPromptOptions.toolGuidelines;
+	expect(guidelines.codemode).toHaveLength(1);
+	expect(guidelines.codemode?.[0]).toContain("pipelines");
+	expect(guidelines.codemode?.[0]).toContain("tool_batch");
+	expect(guidelines.read).toEqual(["Read files"]);
 });

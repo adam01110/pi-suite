@@ -46,7 +46,9 @@ environment variables, and operating-system services.
 The package requires Pi 0.99 or newer and exposes `src/index.ts` as its Pi
 extension entrypoint. I build it with Nix and load the resulting package through
 Pi's `settings.packages` option. MCP and `codemode` use Pi's built-in support;
-enable `codemode` for probe batching with `"defaultTools": ["+codemode"]`.
+enable `codemode` for pipelines with `"defaultTools": ["+codemode"]`. Independent
+probes belong in one `tool_batch` call instead, which the vendored tool-renderer
+registers (`registerBatchTool`).
 
 `patches/pi-native-mcp-lazy.patch` targets Pi 0.99.2 and is applied by the Pi
 Nix derivation, not loaded as a suite extension. Set a native server's

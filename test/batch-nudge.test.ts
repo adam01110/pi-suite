@@ -90,8 +90,8 @@ describe("batch nudge", () => {
 		h.entry("assistant", solo("read", "r2"));
 		const result = h.block({ id: "r2", name: "read" });
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toContain("codemode");
-		expect(result?.reason).toContain("text(await Promise.allSettled");
+		expect(result?.reason).toContain("tool_batch");
+		expect(result?.reason).toContain('{"calls": [{"tool": "read"');
 	});
 
 	test("blocks serial bash probes", () => {
@@ -114,10 +114,8 @@ describe("batch nudge", () => {
 		h.entry("assistant", solo("bash", "b1", args));
 		const result = h.block({ id: "b1", name: "bash", args });
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toContain(
-			"text(await Promise.allSettled([tools.bash(",
-		);
-		expect(result?.reason).toContain('"command":"ls src"');
+		expect(result?.reason).toContain('{"calls": [{"tool": "bash"');
+		expect(result?.reason).toContain('"command": "ls src"');
 	});
 
 	test("blocks a chained bash command on re-issue instead of letting it run", () => {
@@ -188,7 +186,9 @@ describe("batch nudge", () => {
 			args: { command: "ls && pwd" },
 		});
 		expect(result?.block).toBe(true);
-		expect(result?.reason).toContain('tools.bash({"command":"ls"})');
+		expect(result?.reason).toContain(
+			'{"tool": "bash", "args": {"command": "ls"}}',
+		);
 	});
 
 	test("blocks chained bash at deeper nesting levels", () => {
@@ -315,6 +315,24 @@ describe("batch nudge", () => {
 		expect(
 			h.block({ id: "b3", name: "bash", args: { command: "ls" } }),
 		).toBeUndefined();
+	});
+
+	test("treats tool_batch as batching and resets the run", () => {
+		const h = setup();
+		h.entry("user");
+		h.entry("assistant", solo("read", "r1"));
+		h.entry("assistant", [
+			{
+				id: "tb1",
+				name: "tool_batch",
+				args: { calls: [{ tool: "read", args: { path: "a" } }] },
+			},
+		]);
+		expect(h.block({ id: "tb1", name: "tool_batch" })).toBeUndefined();
+		h.entry("assistant", solo("read", "r2"));
+		expect(h.block({ id: "r2", name: "read" })).toBeUndefined();
+		h.entry("assistant", solo("read", "r3"));
+		expect(h.block({ id: "r3", name: "read" })?.block).toBe(true);
 	});
 
 	test("treats codemode as batching and resets the run", () => {

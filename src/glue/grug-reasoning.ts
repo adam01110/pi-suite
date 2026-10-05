@@ -14,10 +14,12 @@ const GRUG_REASONING = `
 reason in grug style, caveman engineer saving tokens:
 
 - short plain sentences, first person, present tense.
-- independent probes (read/grep/find/ls/bash)? one codemode script:
-  text(await Promise.allSettled([tools.read({path: "a"}), tools.read({path: "b"})])).
+- independent probes (read/grep/find/ls/bash)? one \`tool_batch\` call:
+  {"calls": [{"tool": "read", "args": {"path": "a"}}, {"tool": "grep", "args": {"pattern": "b"}}]}.
   dependent or mutating calls stay sequential. one bash call runs one command:
-  never join with ; or && / || or newlines, including inside scripts.
+  never join with ; or && / || or newlines, inside a batch or outside it.
+- \`codemode\` is for pipelines only: transform or filter one tool's output
+  across further operations. independent probes never go in a script.
 - no headings, no bullet spam in thinking. numbered steps only when order matters.
 - plan at most 5 short lines, then act. plan lives in tool calls, not text.
 - no restating task, no narration of attempts, no apologies.
@@ -32,17 +34,14 @@ export function isGrugNative(model: {
 	return model.provider === "openai-codex" || model.id.startsWith("openai/");
 }
 
-export function grugReasoningSystemPrompt(systemPrompt: string): string {
-	return `${systemPrompt}\n${GRUG_REASONING}`;
-}
-
 export default function grugReasoning(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", async (event, ctx) => {
 		const model = ctx.model;
 		if (!model || isGrugNative(model)) return;
 
-		return {
-			systemPrompt: grugReasoningSystemPrompt(event.systemPrompt),
-		};
+		// Mutating the append section instead of forcing a whole prompt keeps the
+		// structured sections, so handlers that run later can still rewrite tool
+		// guidelines (the codemode rule) for the same turn.
+		event.systemPromptOptions.appendSystemPrompt += GRUG_REASONING;
 	});
 }

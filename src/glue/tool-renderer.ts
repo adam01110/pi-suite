@@ -262,8 +262,8 @@ export default async function toolRendererAdapter(
 		["grep", "find"].map((name) => [name, tracker.get(name)] as const),
 	);
 
-	// FFF owns search; native codemode owns batching.
-	const unblock = tracker.block(new Set(["grep", "find", "tool_batch"]));
+	// FFF owns search; the upstream tool_batch owns batching.
+	const unblock = tracker.block(new Set(["grep", "find"]));
 	try {
 		const toolRenderer = await importUpstream(
 			"@vanillagreen/pi-tool-renderer/extensions/tool-renderer.js",
