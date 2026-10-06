@@ -9,6 +9,12 @@ nested calls get the same argument validation, tool_call/tool_result hooks, and
 permission checks as model-issued calls. A context without executeTool keeps the
 built-in path.
 
+ctx.executeTool() resolves to a ToolCallOutcome ({ toolCall, result, isError })
+while the built-in execute() resolves to the bare result, so the registry path
+unwraps the outcome before reading content, details, and isError. Reading the
+outcome as if it were the result reported every registry call as completed with
+no output.
+
 Applied by flake/packages.nix after npm install. To apply it to a development
 checkout, run from the repository root:
 
@@ -27,7 +33,7 @@ Upstream: github.com/vanillagreencom/kendex
  					const timeoutPromise = new Promise<never>((_, reject) => {
  						timeoutHandle = setTimeout(() => {
  							// Reject the race promise BEFORE aborting so the timeout
-@@ -314,10 +312,24 @@
+@@ -314,15 +312,35 @@
  							childController.abort();
  						}, batchCallTimeoutMs);
  					});
@@ -44,11 +50,17 @@ Upstream: github.com/vanillagreencom/kendex
 +						: getBuiltInTool(agent, effectiveCwd, call.tool);
 +					if (!context?.executeTool && !builtin?.execute)
 +						throw new BatchCallError(batchMessages.unavailable(call.tool));
-+					const result = context?.executeTool
++					// ctx.executeTool() resolves to a ToolCallOutcome ({ toolCall, result,
++					// isError }) while the built-in execute() resolves to the bare result,
++					// so the registry path is unwrapped before the shared fields are read.
++					const outcome = context?.executeTool
 +						? await Promise.race([
 +								context.executeTool(call.tool, call.args, { signal: childController.signal }),
 +								timeoutPromise,
 +							])
++						: undefined;
++					const result = outcome
++						? (outcome.result ?? outcome)
 +						: await Promise.race([
 +								builtin.execute(`${toolCallId}:${index}`, call.args, childController.signal, undefined),
 +								timeoutPromise,
@@ -56,3 +68,9 @@ Upstream: github.com/vanillagreencom/kendex
  					return {
  						args: call.args,
  						details: result?.details,
+ 						index,
+-						isError: Boolean(result?.isError),
++						isError: Boolean(outcome ? outcome.isError : result?.isError),
+ 						resultText: textContent(result),
+ 						toolName: call.tool,
+ 						truncated: resultTruncated(result),
